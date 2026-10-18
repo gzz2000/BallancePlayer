@@ -84,6 +84,34 @@ static void RunDiagnosticMenuAutomation(SDL_Window *window)
     }
 }
 
+static void RunDiagnosticResizeAutomation(SDL_Window *window)
+{
+    // Opt-in resize hook used by the native packaging smoke test.  Keeping it
+    // inside SDL also works on VNC sessions where macOS Accessibility refuses
+    // to resize the app window.
+    static const char *requestedSize = getenv("BALLANCE_AUTOMATE_RESIZE");
+    static const Uint64 startedAt = SDL_GetTicks();
+    static bool finished = false;
+    if (finished || !requestedSize || !*requestedSize || !window ||
+        SDL_GetTicks() - startedAt < 1000)
+        return;
+
+    int width = 0;
+    int height = 0;
+    if (sscanf(requestedSize, "%dx%d", &width, &height) == 2 &&
+        width > 0 && height > 0 && SDL_SetWindowSize(window, width, height))
+    {
+        SDL_SyncWindow(window);
+        CLogger::Get().Info("Diagnostic automation: resized window to %dx%d", width, height);
+    }
+    else
+    {
+        CLogger::Get().Error("Diagnostic automation: failed to resize window to '%s': %s",
+                             requestedSize, SDL_GetError());
+    }
+    finished = true;
+}
+
 static int AsciiICompare(const char *lhs, const char *rhs)
 {
     if (!lhs || !rhs)
@@ -333,11 +361,11 @@ bool CGamePlayer::Init(const CGameConfig &runtimeConfig, const CGameConfig &pers
     }
 
     WIN_HANDLE handle = (!m_Config.childWindowRendering) ? m_MainWindow : m_RenderWindow;
-    int renderWidth = m_Config.width;
-    int renderHeight = m_Config.height;
-    if (m_SdlWindow)
-        SDL_GetWindowSizeInPixels(m_SdlWindow, &renderWidth, &renderHeight);
-    CKRECT rect = {0, 0, renderWidth, renderHeight};
+    // CK/Virtools window coordinates are SDL logical window coordinates.  The
+    // rasterizer owns the separate drawable-pixel size used by Retina/HiDPI
+    // swapchains.  Mixing the two makes a resize change the game's coordinate
+    // system and desynchronizes 2D picking from SDL mouse coordinates.
+    CKRECT rect = {0, 0, m_Config.width, m_Config.height};
     m_RenderContext = m_RenderManager->CreateRenderContext(handle, m_Config.driver, &rect, FALSE, m_Config.bpp);
     if (!m_RenderContext)
     {
@@ -354,9 +382,9 @@ bool CGamePlayer::Init(const CGameConfig &runtimeConfig, const CGameConfig &pers
     {
         SDL_ShowWindow(m_SdlWindow);
         SDL_RaiseWindow(m_SdlWindow);
-        // A hidden Cocoa window can initially report its logical size for the
-        // drawable.  Re-query after it is attached to a Retina screen and
-        // resize the render context to the actual backing-pixel dimensions.
+        // Re-query after the hidden Cocoa window has been attached to its
+        // display.  OnSize deliberately keeps CK in logical coordinates; the
+        // rasterizer tracks the drawable-pixel size independently.
         OnSize();
     }
 
@@ -522,6 +550,7 @@ bool CGamePlayer::Update()
 
     SDL_PumpEvents();
     RunDiagnosticMenuAutomation(m_SdlWindow);
+    RunDiagnosticResizeAutomation(m_SdlWindow);
     SDL_Event event;
     if (SDL_PeepEvents(&event, 1, SDL_GETEVENT, SDL_EVENT_QUIT, SDL_EVENT_QUIT) > 0)
         return false;
@@ -1441,7 +1470,11 @@ bool CGamePlayer::SetupPaths()
 void CGamePlayer::ResizeWindow()
 {
     if (m_SdlWindow)
+    {
         SDL_SetWindowSize(m_SdlWindow, m_Config.width, m_Config.height);
+        if (!SDL_SyncWindow(m_SdlWindow))
+            CLogger::Get().Warn("Failed to sync resized window: %s", SDL_GetError());
+    }
     return;
 }
 
@@ -1664,26 +1697,21 @@ void CGamePlayer::OnSize()
         {
             int width = rc.right - rc.left;
             int height = rc.bottom - rc.top;
-            int windowWidth = width, windowHeight = height;
             if (m_SdlWindow)
-            {
-                SDL_GetWindowSize(m_SdlWindow, &windowWidth, &windowHeight);
-                SDL_GetWindowSizeInPixels(m_SdlWindow, &width, &height);
-            }
+                SDL_GetWindowSize(m_SdlWindow, &width, &height);
             if (width > 0 && height > 0)
             {
                 if (!m_Config.fullscreen && !IsRenderFullscreen())
                 {
-                    m_Config.width = windowWidth;
-                    m_Config.height = windowHeight;
+                    m_Config.width = width;
+                    m_Config.height = height;
                     if (m_RenderContext && (m_RenderContext->GetWidth() != width || m_RenderContext->GetHeight() != height))
                     {
                         CKERROR res = m_RenderContext->Resize(0, 0, width, height, VX_RESIZE_NOMOVE);
                         if (res != CK_OK)
                             CLogger::Get().Warn("Failed to resize render context: %d", res);
                         else
-                            CLogger::Get().Debug("Render context resized to %dx%d pixels (window %dx%d)",
-                                                 width, height, windowWidth, windowHeight);
+                            CLogger::Get().Debug("Render context resized to %dx%d logical units", width, height);
                     }
                 }
             }
@@ -1855,7 +1883,7 @@ int CGamePlayer::OnChangeScreenMode(int driver, int screenMode)
     }
 
     ResizeWindow();
-    m_RenderContext->Resize();
+    OnSize();
 
     if (fullscreen)
         OnGoFullscreen(false);
