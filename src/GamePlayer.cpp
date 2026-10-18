@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
@@ -21,11 +22,66 @@
 #define ARRAY_NUM(Array) \
     (sizeof(Array) / sizeof(Array[0]))
 
+namespace {
+constexpr uint64_t kNanosecondsPerSecond = 1000000000ULL;
+constexpr uint64_t kBehaviorRate = 264ULL;
+constexpr uint64_t kBehaviorPeriodWholeNs = kNanosecondsPerSecond / kBehaviorRate;
+constexpr uint64_t kBehaviorPeriodRemainder = kNanosecondsPerSecond % kBehaviorRate;
+// Script, animation and audio-facing time advances once per 264 Hz sample.
+// Ballance's two physics ticks per sample are configured independently below.
+constexpr float kBehaviorDeltaMs = 500.0f / 132.0f;
+constexpr uint64_t kMaximumSchedulerBacklogNs = 250000000ULL;
+constexpr uint64_t kDisplayProbeIntervalNs = 1000000000ULL;
+}
+
 extern bool EditScript(CKLevel *level, const CGameConfig &config, const char *resolvedFile);
 
 static CKSTRING ToCKString(const char *value)
 {
     return const_cast<CKSTRING>(value);
+}
+
+static void PushDiagnosticKey(SDL_Window *window, SDL_Scancode scancode)
+{
+    if (!window)
+        return;
+
+    for (int down = 1; down >= 0; --down)
+    {
+        SDL_Event event = {};
+        event.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
+        event.key.timestamp = SDL_GetTicksNS();
+        event.key.windowID = SDL_GetWindowID(window);
+        event.key.scancode = scancode;
+        event.key.key = SDL_GetKeyFromScancode(scancode, SDL_KMOD_NONE, false);
+        event.key.down = down != 0;
+        SDL_PushEvent(&event);
+    }
+}
+
+static void RunDiagnosticMenuAutomation(SDL_Window *window)
+{
+    // Opt-in test hook for VNC sessions where macOS refuses synthetic keyboard
+    // input.  It follows the default selections: Start, then Level 1.
+    static const bool enabled = getenv("BALLANCE_AUTOMATE_START") != NULL;
+    static const Uint64 startedAt = SDL_GetTicks();
+    static int step = 0;
+    if (!enabled)
+        return;
+
+    const Uint64 elapsed = SDL_GetTicks() - startedAt;
+    if (step == 0 && elapsed >= 6200)
+    {
+        PushDiagnosticKey(window, SDL_SCANCODE_RETURN);
+        CLogger::Get().Info("Diagnostic automation: selected Start");
+        ++step;
+    }
+    else if (step == 1 && elapsed >= 8500)
+    {
+        PushDiagnosticKey(window, SDL_SCANCODE_RETURN);
+        CLogger::Get().Info("Diagnostic automation: selected Level 1");
+        ++step;
+    }
 }
 
 static int AsciiICompare(const char *lhs, const char *rhs)
@@ -222,7 +278,15 @@ CGamePlayer::CGamePlayer()
       m_MsgDoubleClick(-1),
       m_GameInfo(NULL),
       m_AltEnterShortcutDown(false),
-      m_AltF4ShortcutDown(false) {}
+      m_AltF4ShortcutDown(false),
+      m_NextBehaviorDeadlineNs(0),
+      m_BehaviorDeadlineRemainder(0),
+      m_NextRenderDeadlineNs(0),
+      m_RenderPeriodNs(kNanosecondsPerSecond / 60),
+      m_LastDisplayProbeNs(0),
+      m_ScheduledDisplay(0),
+      m_ScheduledRefreshNumerator(0),
+      m_ScheduledRefreshDenominator(1) {}
 
 CGamePlayer::~CGamePlayer()
 {
@@ -269,7 +333,11 @@ bool CGamePlayer::Init(const CGameConfig &runtimeConfig, const CGameConfig &pers
     }
 
     WIN_HANDLE handle = (!m_Config.childWindowRendering) ? m_MainWindow : m_RenderWindow;
-    CKRECT rect = {0, 0, m_Config.width, m_Config.height};
+    int renderWidth = m_Config.width;
+    int renderHeight = m_Config.height;
+    if (m_SdlWindow)
+        SDL_GetWindowSizeInPixels(m_SdlWindow, &renderWidth, &renderHeight);
+    CKRECT rect = {0, 0, renderWidth, renderHeight};
     m_RenderContext = m_RenderManager->CreateRenderContext(handle, m_Config.driver, &rect, FALSE, m_Config.bpp);
     if (!m_RenderContext)
     {
@@ -286,6 +354,10 @@ bool CGamePlayer::Init(const CGameConfig &runtimeConfig, const CGameConfig &pers
     {
         SDL_ShowWindow(m_SdlWindow);
         SDL_RaiseWindow(m_SdlWindow);
+        // A hidden Cocoa window can initially report its logical size for the
+        // drawable.  Re-query after it is attached to a Retina screen and
+        // resize the render context to the actual backing-pixel dimensions.
+        OnSize();
     }
 
     m_State = eReady;
@@ -388,11 +460,68 @@ void CGamePlayer::Run()
         continue;
 }
 
+void CGamePlayer::ResetFrameScheduler()
+{
+    const uint64_t now = SDL_GetTicksNS();
+    m_NextBehaviorDeadlineNs = now;
+    m_BehaviorDeadlineRemainder = 0;
+    m_NextRenderDeadlineNs = now;
+    m_LastDisplayProbeNs = 0;
+    RefreshDisplaySchedule(now);
+}
+
+void CGamePlayer::RefreshDisplaySchedule(uint64_t now)
+{
+    if (!m_SdlWindow)
+        return;
+
+    const SDL_DisplayID display = SDL_GetDisplayForWindow(m_SdlWindow);
+    const SDL_DisplayMode *mode = display ? SDL_GetCurrentDisplayMode(display) : NULL;
+    int numerator = mode ? mode->refresh_rate_numerator : 0;
+    int denominator = mode ? mode->refresh_rate_denominator : 1;
+    if (numerator <= 0 && mode && mode->refresh_rate > 0.0f) {
+        numerator = (int)lroundf(mode->refresh_rate * 1000.0f);
+        denominator = 1000;
+    }
+    if (numerator <= 0 || denominator <= 0) {
+        numerator = 60;
+        denominator = 1;
+    }
+
+    m_LastDisplayProbeNs = now;
+    if (m_ScheduledDisplay == display &&
+        m_ScheduledRefreshNumerator == numerator &&
+        m_ScheduledRefreshDenominator == denominator)
+        return;
+
+    m_ScheduledDisplay = display;
+    m_ScheduledRefreshNumerator = numerator;
+    m_ScheduledRefreshDenominator = denominator;
+    m_RenderPeriodNs = (uint64_t)llround(
+        (double)kNanosecondsPerSecond * (double)denominator / (double)numerator);
+    if (!m_RenderPeriodNs)
+        m_RenderPeriodNs = 1;
+    m_NextRenderDeadlineNs = now;
+    CLogger::Get().Info("Display-locked rendering: %.3f Hz",
+                        (double)numerator / (double)denominator);
+}
+
+void CGamePlayer::AdvanceBehaviorDeadline()
+{
+    m_NextBehaviorDeadlineNs += kBehaviorPeriodWholeNs;
+    m_BehaviorDeadlineRemainder += kBehaviorPeriodRemainder;
+    if (m_BehaviorDeadlineRemainder >= kBehaviorRate) {
+        ++m_NextBehaviorDeadlineNs;
+        m_BehaviorDeadlineRemainder -= kBehaviorRate;
+    }
+}
+
 bool CGamePlayer::Update()
 {
     DrainPlayerCommands();
 
     SDL_PumpEvents();
+    RunDiagnosticMenuAutomation(m_SdlWindow);
     SDL_Event event;
     if (SDL_PeepEvents(&event, 1, SDL_GETEVENT, SDL_EVENT_QUIT, SDL_EVENT_QUIT) > 0)
         return false;
@@ -447,19 +576,42 @@ bool CGamePlayer::Update()
     m_AltEnterShortcutDown = shortcutState.altEnterDown;
     m_AltF4ShortcutDown = shortcutState.altF4Down;
 
-    float beforeRender = 0.0f;
-    float beforeProcess = 0.0f;
-    m_TimeManager->GetTimeToWaitForLimits(beforeRender, beforeProcess);
-    if (beforeProcess <= 0)
-    {
-        m_TimeManager->ResetChronos(FALSE, TRUE);
+    uint64_t now = SDL_GetTicksNS();
+    if (!m_NextBehaviorDeadlineNs)
+        ResetFrameScheduler();
+    if (now - m_LastDisplayProbeNs >= kDisplayProbeIntervalNs)
+        RefreshDisplaySchedule(now);
+
+    // Loading a level, moving between displays or suspending the process can
+    // leave a large wall-clock gap. Do not fast-forward gameplay to repay it;
+    // resume the deterministic timeline from the current instant instead.
+    if (now > m_NextBehaviorDeadlineNs &&
+        now - m_NextBehaviorDeadlineNs > kMaximumSchedulerBacklogNs) {
+        m_NextBehaviorDeadlineNs = now;
+        m_BehaviorDeadlineRemainder = 0;
+    }
+    if (now > m_NextRenderDeadlineNs &&
+        now - m_NextRenderDeadlineNs > kMaximumSchedulerBacklogNs)
+        m_NextRenderDeadlineNs = now;
+
+    while (now >= m_NextBehaviorDeadlineNs) {
+        AdvanceBehaviorDeadline();
         Process();
+        now = SDL_GetTicksNS();
     }
-    if (beforeRender <= 0)
-    {
-        m_TimeManager->ResetChronos(TRUE, FALSE);
+
+    if (now >= m_NextRenderDeadlineNs) {
+        do {
+            m_NextRenderDeadlineNs += m_RenderPeriodNs;
+        } while (m_NextRenderDeadlineNs <= now);
         Render();
+        now = SDL_GetTicksNS();
     }
+
+    const uint64_t nextDeadline = m_NextBehaviorDeadlineNs < m_NextRenderDeadlineNs
+        ? m_NextBehaviorDeadlineNs : m_NextRenderDeadlineNs;
+    if (nextDeadline > now)
+        SDL_DelayPrecise(nextDeadline - now);
 
     return true;
 }
@@ -472,6 +624,28 @@ void CGamePlayer::Process()
 void CGamePlayer::Render()
 {
     m_RenderContext->Render();
+
+    // Diagnostic capture for environments where the window server cannot
+    // screenshot a Metal swapchain (for example, some VNC display modes).
+    // This is deliberately opt-in and captures the engine backbuffer itself.
+    static const char *capturePath = getenv("BALLANCE_CAPTURE_FRAME");
+    static int framesUntilCapture = []() {
+        const char *value = getenv("BALLANCE_CAPTURE_AFTER");
+        int frames = value ? atoi(value) : 120;
+        return frames > 0 ? frames : 1;
+    }();
+    static bool captureFinished = false;
+    if (capturePath && *capturePath && !captureFinished && --framesUntilCapture <= 0)
+    {
+        captureFinished = true;
+        CKERROR result = m_RenderContext->DumpToFile(ToCKString(capturePath), NULL,
+                                                     VXBUFFER_BACKBUFFER);
+        if (result == CK_OK)
+            CLogger::Get().Info("Captured diagnostic frame: %s", capturePath);
+        else
+            CLogger::Get().Error("Failed to capture diagnostic frame (%d): %s",
+                                 result, capturePath);
+    }
 }
 
 void CGamePlayer::Shutdown()
@@ -546,7 +720,8 @@ bool CGamePlayer::InitWindow()
 
     m_Config.childWindowRendering = false;
 
-    SDL_WindowFlags flags = SDL_WINDOW_HIDDEN | SDL_WINDOW_RESIZABLE;
+    SDL_WindowFlags flags = SDL_WINDOW_HIDDEN | SDL_WINDOW_RESIZABLE |
+                            SDL_WINDOW_HIGH_PIXEL_DENSITY;
     if (m_Config.borderless)
         flags = (SDL_WindowFlags)(flags | SDL_WINDOW_BORDERLESS);
     if (m_Config.fullscreen)
@@ -1108,6 +1283,12 @@ bool CGamePlayer::SetupManagers()
         CLogger::Get().Error("Unable to get Time Manager.");
         return false;
     }
+    m_TimeManager->SetFixedDeltaTime(kBehaviorDeltaMs);
+    m_TimeManager->SetFixedProcessRate((float)kBehaviorRate);
+    m_TimeManager->SetFixedPhysicsTimeScale(2.0f);
+    m_TimeManager->SetBehavioralRateLimit((float)kBehaviorRate);
+    m_TimeManager->ChangeLimitOptions(CK_FRAMERATE_SYNC, CK_BEHRATE_LIMIT);
+    ResetFrameScheduler();
 
     m_AttributeManager = m_CKContext->GetAttributeManager();
     if (!m_AttributeManager)

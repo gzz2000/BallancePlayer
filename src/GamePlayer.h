@@ -1,6 +1,8 @@
 ﻿#ifndef PLAYER_GAMEPLAYER_H
 #define PLAYER_GAMEPLAYER_H
 
+#include <stdint.h>
+
 #include "CKAll.h"
 
 #include "GameConfig.h"
@@ -74,6 +76,9 @@ private:
     bool SetupPaths();
     void DrainPlayerCommands();
     int ExecutePlayerCommand(InterfaceManager *manager, const TTPlayerCommand &command);
+    void ResetFrameScheduler();
+    void RefreshDisplaySchedule(uint64_t now);
+    void AdvanceBehaviorDeadline();
 
     void ResizeWindow();
 
@@ -133,6 +138,14 @@ private:
     CGameInfo *m_GameInfo;
     bool m_AltEnterShortcutDown;
     bool m_AltF4ShortcutDown;
+    uint64_t m_NextBehaviorDeadlineNs;
+    uint64_t m_BehaviorDeadlineRemainder;
+    uint64_t m_NextRenderDeadlineNs;
+    uint64_t m_RenderPeriodNs;
+    uint64_t m_LastDisplayProbeNs;
+    unsigned int m_ScheduledDisplay;
+    int m_ScheduledRefreshNumerator;
+    int m_ScheduledRefreshDenominator;
     CGameConfig m_Config;
     CGameConfig m_PersistentConfig;
 };
