@@ -199,6 +199,7 @@ Player[.exe] [OPTIONS]
 - `--log <file>`：将日志写入指定文件。
 - `--cmo <file>`：加载指定的 composition 文件。这是文件路径，不会改变资源根路径。
 - `--root-path <dir>`：设置资源根路径。除非被显式覆盖，插件、渲染引擎、管理器、Building Block、声音、贴图和数据路径都会从该根路径派生。
+- `--user-data-path <dir>`：使用可写工作目录保存 `Database.tdb`、`Player.ini`、`Player.log`、自定义地图、Mod 和截图。首次启动会复制包内的 `Database.tdb`，但绝不会覆盖已有成绩；它与只读资源根目录相互独立。
 - `--plugin-path <dir>`：设置插件目录。
 - `--render-engine-path <dir>`：设置渲染引擎目录。
 - `--manager-path <dir>`：设置管理器目录。

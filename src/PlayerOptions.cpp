@@ -108,6 +108,52 @@ namespace
 
 namespace playeroptions
 {
+    bool GetUserDataPath(CmdlineParser &parser, XString &path)
+    {
+        path.Clear();
+        bool found = false;
+        while (!parser.Done())
+        {
+            CmdlineArg arg;
+            if (parser.Next(arg, "--user-data-path", '\0', 1))
+            {
+                XString value;
+                if (arg.GetValue(0, value) && !value.IsEmpty())
+                {
+                    path = value;
+                    found = true;
+                }
+            }
+            else
+            {
+                parser.Skip();
+            }
+        }
+        parser.Reset();
+        return found;
+    }
+
+    bool HasCommandLineOption(CmdlineParser &parser, const char *longopt)
+    {
+        bool found = false;
+        while (!parser.Done())
+        {
+            CmdlineArg arg;
+            if (parser.Next(arg, longopt, '\0', 1))
+            {
+                found = arg.GetSize() > 0;
+                if (found)
+                    break;
+            }
+            else
+            {
+                parser.Skip();
+            }
+        }
+        parser.Reset();
+        return found;
+    }
+
     void ApplyPathOptions(CGameConfig &config, CmdlineParser &parser)
     {
         CmdlineArg arg;

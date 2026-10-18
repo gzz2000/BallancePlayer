@@ -200,6 +200,7 @@ Player[.exe] [OPTIONS]
 - `--log <file>`: Write logs to a specific file.
 - `--cmo <file>`: Load a specific composition file. This is a file path and does not change the resource root.
 - `--root-path <dir>`: Set the resource root. Unless explicitly overridden, plugin, render engine, manager, building block, sound, bitmap, and data paths are derived from this root.
+- `--user-data-path <dir>`: Use a writable working directory for `Database.tdb`, `Player.ini`, `Player.log`, custom maps, mods, and screenshots. The bundled `Database.tdb` is copied here on first launch and never overwrites existing scores. This is independent of the read-only resource root.
 - `--plugin-path <dir>`: Set the plugin directory.
 - `--render-engine-path <dir>`: Set the render engine directory.
 - `--manager-path <dir>`: Set the manager directory.

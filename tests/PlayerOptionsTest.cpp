@@ -54,6 +54,27 @@ TEST(PlayerOptionsTest, AppliesConfigOptionsFromLongAndShortOptions) {
     EXPECT_TRUE(config.childWindowRendering);
 }
 
+TEST(PlayerOptionsTest, ReadsUserDataPathWithoutTreatingItAsAResourcePath) {
+    CmdlineParser parser("--width 800 --user-data-path \"Library Data/Ballance\" --height 600");
+    XString path;
+
+    EXPECT_TRUE(playeroptions::GetUserDataPath(parser, path));
+    EXPECT_STREQ(path.CStr(), "Library Data/Ballance");
+    EXPECT_FALSE(playeroptions::HasPathOption("--user-data-path"));
+
+    CGameConfig config;
+    EXPECT_TRUE(playeroptions::ApplyConfigOptions(config, parser));
+    EXPECT_EQ(config.width, 800);
+    EXPECT_EQ(config.height, 600);
+}
+
+TEST(PlayerOptionsTest, DetectsExplicitFilePathOverrides) {
+    CmdlineParser parser("--user-data-path data --config custom.ini --log=custom.log");
+    EXPECT_TRUE(playeroptions::HasCommandLineOption(parser, "--config"));
+    EXPECT_TRUE(playeroptions::HasCommandLineOption(parser, "--log"));
+    EXPECT_FALSE(playeroptions::HasCommandLineOption(parser, "--cmo"));
+}
+
 TEST(PlayerOptionsTest, CommandLineConfigOptionsApplyOnlyToRuntimeCopy) {
     CmdlineParser parser("--width=800 --height 600 --fullscreen");
     CGameConfig persistentConfig;

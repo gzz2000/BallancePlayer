@@ -7,6 +7,12 @@ class CmdlineParser;
 
 namespace playeroptions
 {
+    // --user-data-path intentionally is not a CGameConfig resource path.  It
+    // selects the writable working directory used by game scripts (notably
+    // Database.tdb), while --root-path continues to select read-only assets.
+    bool GetUserDataPath(CmdlineParser &parser, XString &path);
+    bool HasCommandLineOption(CmdlineParser &parser, const char *longopt);
+
     void ApplyPathOptions(CGameConfig &config, CmdlineParser &parser);
     bool ApplyConfigOptions(CGameConfig &config, CmdlineParser &parser);
     bool ApplyRuntimeOptions(CGameConfig &config, CmdlineParser &parser);
