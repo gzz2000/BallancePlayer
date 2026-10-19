@@ -2,6 +2,7 @@
 #include <SDL3/SDL_main.h>
 
 #include <filesystem>
+#include <cstdlib>
 #include <system_error>
 
 #include "CmdlineParser.h"
@@ -13,6 +14,7 @@
 
 static bool EnsurePersistentConfigReady(CGameConfig &config);
 static bool PrepareUserDataDirectory(CGameConfig &config, CmdlineParser &parser);
+static bool SetDatabaseDirectoryEnvironment(const char *path);
 static void ShowErrorMessage(const char *text);
 
 namespace fs = std::filesystem;
@@ -105,6 +107,19 @@ static bool PrepareUserDataDirectory(CGameConfig &config, CmdlineParser &parser)
         return false;
     }
 
+    // TT Database Manager receives the database name directly from the game
+    // composition and does not use CKPathManager or the process working
+    // directory when that name is absolute.  Tell it where mutable databases
+    // belong before base.cmo starts executing.
+    if (!SetDatabaseDirectoryEnvironment(userDataPath.CStr()))
+    {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                     "Failed to configure writable database directory '%s'.",
+                     userDataPath.CStr());
+        ShowErrorMessage("Failed to configure the score database path.");
+        return false;
+    }
+
     // Command-line file paths remain authoritative.  Otherwise, keep all
     // mutable Player state beside the script-owned Database.tdb.
     if (!playeroptions::HasCommandLineOption(parser, "--config"))
@@ -140,6 +155,17 @@ static bool PrepareUserDataDirectory(CGameConfig &config, CmdlineParser &parser)
         return false;
     }
     return true;
+}
+
+static bool SetDatabaseDirectoryEnvironment(const char *path)
+{
+    if (!path || path[0] == '\0')
+        return false;
+#if defined(_WIN32)
+    return _putenv_s("TT_DATABASE_DIRECTORY", path) == 0;
+#else
+    return setenv("TT_DATABASE_DIRECTORY", path, 1) == 0;
+#endif
 }
 
 static bool EnsurePersistentConfigReady(CGameConfig &config)
