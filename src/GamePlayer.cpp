@@ -540,23 +540,28 @@ void CGamePlayer::RefreshFrameRateSchedule(uint64_t now)
     uint64_t behaviorRate = kBehaviorRate;
     uint64_t renderPeriodNs = m_DisplayRenderPeriodNs;
 
-    // The original Player tied a CK_FRAMERATE_LIMIT frame to one complete
-    // input/behavior/physics sample. BML Plus relies on that quirk for
-    // slow-motion practice. The native player normally separates simulation
-    // from presentation, so reproduce the legacy coupling only while this
-    // explicit limit mode is selected. Never let a high cap accelerate the
-    // deterministic 264 Hz timeline.
+    // Presentation limits and the deterministic simulation rate are separate.
+    // Ballance's opening script sets a 60 Hz presentation limit of its own; it
+    // must not slow the 264 Hz script timeline. Native BML+ practice controls
+    // request slow motion explicitly through FixedProcessRate instead.
+    if (m_TimeManager)
+    {
+        const float requestedRate = m_TimeManager->GetFixedProcessRate();
+        if (requestedRate > 0.0f && isfinite(requestedRate))
+        {
+            uint64_t rate = (uint64_t)llroundf(requestedRate);
+            if (rate < 1)
+                rate = 1;
+            behaviorRate = rate < kBehaviorRate ? rate : kBehaviorRate;
+        }
+    }
+
     if (m_TimeManager &&
         (m_TimeManager->GetLimitOptions() & CK_FRAMERATE_MASK) == CK_FRAMERATE_LIMIT)
     {
         const float requestedLimit = m_TimeManager->GetFrameRateLimit();
         if (requestedLimit > 0.0f && isfinite(requestedLimit))
         {
-            uint64_t requestedRate = (uint64_t)llroundf(requestedLimit);
-            if (requestedRate < 1)
-                requestedRate = 1;
-            behaviorRate = requestedRate < kBehaviorRate ? requestedRate : kBehaviorRate;
-
             const uint64_t requestedRenderPeriod =
                 (uint64_t)ceil((double)kNanosecondsPerSecond / (double)requestedLimit);
             if (requestedRenderPeriod > renderPeriodNs)
