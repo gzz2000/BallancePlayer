@@ -25,8 +25,6 @@
 namespace {
 constexpr uint64_t kNanosecondsPerSecond = 1000000000ULL;
 constexpr uint64_t kBehaviorRate = 264ULL;
-constexpr uint64_t kBehaviorPeriodWholeNs = kNanosecondsPerSecond / kBehaviorRate;
-constexpr uint64_t kBehaviorPeriodRemainder = kNanosecondsPerSecond % kBehaviorRate;
 // Script, animation and audio-facing time advances once per 264 Hz sample.
 // Ballance's two physics ticks per sample are configured independently below.
 constexpr float kBehaviorDeltaMs = 500.0f / 132.0f;
@@ -309,7 +307,9 @@ CGamePlayer::CGamePlayer()
       m_AltF4ShortcutDown(false),
       m_NextBehaviorDeadlineNs(0),
       m_BehaviorDeadlineRemainder(0),
+      m_BehaviorRate(kBehaviorRate),
       m_NextRenderDeadlineNs(0),
+      m_DisplayRenderPeriodNs(kNanosecondsPerSecond / 60),
       m_RenderPeriodNs(kNanosecondsPerSecond / 60),
       m_LastDisplayProbeNs(0),
       m_ScheduledDisplay(0),
@@ -496,6 +496,7 @@ void CGamePlayer::ResetFrameScheduler()
     m_NextRenderDeadlineNs = now;
     m_LastDisplayProbeNs = 0;
     RefreshDisplaySchedule(now);
+    RefreshFrameRateSchedule(now);
 }
 
 void CGamePlayer::RefreshDisplaySchedule(uint64_t now)
@@ -525,22 +526,68 @@ void CGamePlayer::RefreshDisplaySchedule(uint64_t now)
     m_ScheduledDisplay = display;
     m_ScheduledRefreshNumerator = numerator;
     m_ScheduledRefreshDenominator = denominator;
-    m_RenderPeriodNs = (uint64_t)llround(
+    m_DisplayRenderPeriodNs = (uint64_t)llround(
         (double)kNanosecondsPerSecond * (double)denominator / (double)numerator);
-    if (!m_RenderPeriodNs)
-        m_RenderPeriodNs = 1;
+    if (!m_DisplayRenderPeriodNs)
+        m_DisplayRenderPeriodNs = 1;
     m_NextRenderDeadlineNs = now;
     CLogger::Get().Info("Display-locked rendering: %.3f Hz",
                         (double)numerator / (double)denominator);
 }
 
+void CGamePlayer::RefreshFrameRateSchedule(uint64_t now)
+{
+    uint64_t behaviorRate = kBehaviorRate;
+    uint64_t renderPeriodNs = m_DisplayRenderPeriodNs;
+
+    // The original Player tied a CK_FRAMERATE_LIMIT frame to one complete
+    // input/behavior/physics sample. BML Plus relies on that quirk for
+    // slow-motion practice. The native player normally separates simulation
+    // from presentation, so reproduce the legacy coupling only while this
+    // explicit limit mode is selected. Never let a high cap accelerate the
+    // deterministic 264 Hz timeline.
+    if (m_TimeManager &&
+        (m_TimeManager->GetLimitOptions() & CK_FRAMERATE_MASK) == CK_FRAMERATE_LIMIT)
+    {
+        const float requestedLimit = m_TimeManager->GetFrameRateLimit();
+        if (requestedLimit > 0.0f && isfinite(requestedLimit))
+        {
+            uint64_t requestedRate = (uint64_t)llroundf(requestedLimit);
+            if (requestedRate < 1)
+                requestedRate = 1;
+            behaviorRate = requestedRate < kBehaviorRate ? requestedRate : kBehaviorRate;
+
+            const uint64_t requestedRenderPeriod =
+                (uint64_t)ceil((double)kNanosecondsPerSecond / (double)requestedLimit);
+            if (requestedRenderPeriod > renderPeriodNs)
+                renderPeriodNs = requestedRenderPeriod;
+        }
+    }
+
+    if (behaviorRate != m_BehaviorRate)
+    {
+        m_BehaviorRate = behaviorRate;
+        m_BehaviorDeadlineRemainder = 0;
+        m_NextBehaviorDeadlineNs = now;
+        AdvanceBehaviorDeadline();
+        CLogger::Get().Info("Deterministic gameplay schedule: %llu samples/s",
+                            (unsigned long long)m_BehaviorRate);
+    }
+
+    if (renderPeriodNs != m_RenderPeriodNs)
+    {
+        m_RenderPeriodNs = renderPeriodNs;
+        m_NextRenderDeadlineNs = now;
+    }
+}
+
 void CGamePlayer::AdvanceBehaviorDeadline()
 {
-    m_NextBehaviorDeadlineNs += kBehaviorPeriodWholeNs;
-    m_BehaviorDeadlineRemainder += kBehaviorPeriodRemainder;
-    if (m_BehaviorDeadlineRemainder >= kBehaviorRate) {
+    m_NextBehaviorDeadlineNs += kNanosecondsPerSecond / m_BehaviorRate;
+    m_BehaviorDeadlineRemainder += kNanosecondsPerSecond % m_BehaviorRate;
+    if (m_BehaviorDeadlineRemainder >= m_BehaviorRate) {
         ++m_NextBehaviorDeadlineNs;
-        m_BehaviorDeadlineRemainder -= kBehaviorRate;
+        m_BehaviorDeadlineRemainder -= m_BehaviorRate;
     }
 }
 
@@ -610,6 +657,7 @@ bool CGamePlayer::Update()
         ResetFrameScheduler();
     if (now - m_LastDisplayProbeNs >= kDisplayProbeIntervalNs)
         RefreshDisplaySchedule(now);
+    RefreshFrameRateSchedule(now);
 
     // Loading a level, moving between displays or suspending the process can
     // leave a large wall-clock gap. Do not fast-forward gameplay to repay it;

@@ -78,6 +78,7 @@ private:
     int ExecutePlayerCommand(InterfaceManager *manager, const TTPlayerCommand &command);
     void ResetFrameScheduler();
     void RefreshDisplaySchedule(uint64_t now);
+    void RefreshFrameRateSchedule(uint64_t now);
     void AdvanceBehaviorDeadline();
 
     void ResizeWindow();
@@ -140,7 +141,9 @@ private:
     bool m_AltF4ShortcutDown;
     uint64_t m_NextBehaviorDeadlineNs;
     uint64_t m_BehaviorDeadlineRemainder;
+    uint64_t m_BehaviorRate;
     uint64_t m_NextRenderDeadlineNs;
+    uint64_t m_DisplayRenderPeriodNs;
     uint64_t m_RenderPeriodNs;
     uint64_t m_LastDisplayProbeNs;
     unsigned int m_ScheduledDisplay;
