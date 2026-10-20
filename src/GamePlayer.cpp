@@ -63,21 +63,35 @@ static void RunDiagnosticMenuAutomation(SDL_Window *window)
     // input.  It follows the default selections: Start, then Level 1.
     static const bool enabled = getenv("BALLANCE_AUTOMATE_START") != NULL;
     static const Uint64 startedAt = SDL_GetTicks();
+    static const Uint64 firstActionAt = []() -> Uint64 {
+        const char *value = getenv("BALLANCE_AUTOMATE_START_DELAY_MS");
+        if (!value || !*value)
+            return 6200;
+        const unsigned long long parsed = strtoull(value, nullptr, 10);
+        return parsed > 0 ? (Uint64)parsed : 6200;
+    }();
+    static const bool skipTutorial = getenv("BALLANCE_AUTOMATE_SKIP_TUTORIAL") != NULL;
     static int step = 0;
     if (!enabled)
         return;
 
     const Uint64 elapsed = SDL_GetTicks() - startedAt;
-    if (step == 0 && elapsed >= 6200)
+    if (step == 0 && elapsed >= firstActionAt)
     {
         PushDiagnosticKey(window, SDL_SCANCODE_RETURN);
         CLogger::Get().Info("Diagnostic automation: selected Start");
         ++step;
     }
-    else if (step == 1 && elapsed >= 8500)
+    else if (step == 1 && elapsed >= firstActionAt + 2500)
     {
         PushDiagnosticKey(window, SDL_SCANCODE_RETURN);
         CLogger::Get().Info("Diagnostic automation: selected Level 1");
+        ++step;
+    }
+    else if (step == 2 && skipTutorial && elapsed >= firstActionAt + 15000)
+    {
+        PushDiagnosticKey(window, SDL_SCANCODE_Q);
+        CLogger::Get().Info("Diagnostic automation: skipped Level 1 tutorial");
         ++step;
     }
 }
@@ -108,6 +122,15 @@ static void RunDiagnosticResizeAutomation(SDL_Window *window)
                              requestedSize, SDL_GetError());
     }
     finished = true;
+}
+
+static bool RunDiagnosticQuitAutomation()
+{
+    static const char *requestedDelay = getenv("BALLANCE_AUTOMATE_QUIT_AFTER_MS");
+    static const Uint64 startedAt = SDL_GetTicks();
+    static const Uint64 delay = requestedDelay && *requestedDelay
+        ? (Uint64)strtoull(requestedDelay, nullptr, 10) : 0;
+    return delay > 0 && SDL_GetTicks() - startedAt >= delay;
 }
 
 static int AsciiICompare(const char *lhs, const char *rhs)
@@ -606,6 +629,8 @@ bool CGamePlayer::Update()
     SDL_PumpEvents();
     RunDiagnosticMenuAutomation(m_SdlWindow);
     RunDiagnosticResizeAutomation(m_SdlWindow);
+    if (RunDiagnosticQuitAutomation())
+        return false;
     SDL_Event event;
     if (SDL_PeepEvents(&event, 1, SDL_GETEVENT, SDL_EVENT_QUIT, SDL_EVENT_QUIT) > 0)
         return false;
