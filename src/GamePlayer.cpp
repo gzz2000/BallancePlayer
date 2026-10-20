@@ -308,6 +308,7 @@ CGamePlayer::CGamePlayer()
       m_NextBehaviorDeadlineNs(0),
       m_BehaviorDeadlineRemainder(0),
       m_BehaviorRate(kBehaviorRate),
+      m_RuntimeScheduleRevision(0),
       m_NextRenderDeadlineNs(0),
       m_DisplayRenderPeriodNs(kNanosecondsPerSecond / 60),
       m_RenderPeriodNs(kNanosecondsPerSecond / 60),
@@ -497,6 +498,8 @@ void CGamePlayer::ResetFrameScheduler()
     m_LastDisplayProbeNs = 0;
     RefreshDisplaySchedule(now);
     RefreshFrameRateSchedule(now);
+    if (m_TimeManager)
+        m_RuntimeScheduleRevision = m_TimeManager->GetRuntimeScheduleRevision();
 }
 
 void CGamePlayer::RefreshDisplaySchedule(uint64_t now)
@@ -680,6 +683,15 @@ bool CGamePlayer::Update()
         AdvanceBehaviorDeadline();
         Process();
         now = SDL_GetTicksNS();
+        // A rate change, rewind, or long synchronous practice operation must
+        // not be interpreted as simulation debt.  Restart both deadlines at
+        // the present wall-clock instant before another game tick can run.
+        if (m_TimeManager && m_RuntimeScheduleRevision !=
+                m_TimeManager->GetRuntimeScheduleRevision()) {
+            ResetFrameScheduler();
+            now = SDL_GetTicksNS();
+            break;
+        }
     }
 
     if (now >= m_NextRenderDeadlineNs) {

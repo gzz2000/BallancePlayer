@@ -142,6 +142,7 @@ private:
     uint64_t m_NextBehaviorDeadlineNs;
     uint64_t m_BehaviorDeadlineRemainder;
     uint64_t m_BehaviorRate;
+    CKDWORD m_RuntimeScheduleRevision;
     uint64_t m_NextRenderDeadlineNs;
     uint64_t m_DisplayRenderPeriodNs;
     uint64_t m_RenderPeriodNs;
