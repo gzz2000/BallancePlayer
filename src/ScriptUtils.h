@@ -601,7 +601,7 @@ namespace scriptutils
     CKParameterLocal *GenerateInputParameter<const char *>(CKBehavior *script, CKBehavior *beh, int inPos, const char *value)
     {
         CKParameterLocal *param = GenerateInputParameter(script, beh, inPos);
-        param->SetValue(value);
+        param->SetStringValue(ToCKString(value));
         return param;
     }
 
@@ -635,7 +635,7 @@ namespace scriptutils
     CKParameterLocal *GenerateTargetParameter<const char *>(CKBehavior *script, CKBehavior *beh, const char *value)
     {
         CKParameterLocal *param = GenerateTargetParameter(script, beh);
-        param->SetValue(value);
+        param->SetStringValue(ToCKString(value));
         return param;
     }
 
@@ -673,7 +673,7 @@ namespace scriptutils
     {
         assert(beh != NULL);
         CKParameter *param = beh->GetTargetParameter()->GetDirectSource();
-        param->SetValue(value);
+        param->SetStringValue(ToCKString(value));
     }
 
     template <typename T>
@@ -698,7 +698,7 @@ namespace scriptutils
         if (0 <= inPos && inPos < beh->GetInputParameterCount())
         {
             CKParameter *param = beh->GetInputParameter(inPos)->GetDirectSource();
-            param->SetValue(value);
+            param->SetStringValue(ToCKString(value));
         }
     }
 
@@ -724,7 +724,7 @@ namespace scriptutils
         if (0 <= pos && pos < beh->GetLocalParameterCount())
         {
             CKParameterLocal *param = beh->GetLocalParameter(pos);
-            param->SetValue(value);
+            param->SetStringValue(ToCKString(value));
         }
     }
 

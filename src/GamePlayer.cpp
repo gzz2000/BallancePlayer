@@ -1,11 +1,22 @@
 ﻿#include "GamePlayer.h"
 #include "PlayerOptions.h"
+#if __has_include("CKSortPolicy.h")
+#include "CKSortPolicy.h"
+#define PLAYER_HAS_CONTEXT_SORT_POLICY 1
+#endif
 
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+
+#if defined(__APPLE__) || defined(__linux__)
+#include <dlfcn.h>
+#endif
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
@@ -38,6 +49,20 @@ static CKSTRING ToCKString(const char *value)
 {
     return const_cast<CKSTRING>(value);
 }
+
+// Resolve against the actual plugin instance. A host without the negotiated
+// interface keeps its ordinary rendering path; no stale function pointer is
+// retained across ClearAll/plugin unload or another game load.
+static void *BmlFunction(const char *name)
+{
+    auto *plugins = CKGetPluginManager();
+    auto *entry = plugins ? plugins->FindComponent(CKGUID(0x32a40332, 0x3bf12a51)) : nullptr;
+    auto *dll = entry ? plugins->GetPluginDllInfo(entry->m_PluginDllIndex) : nullptr;
+    return dll ? reinterpret_cast<void *>(dll->GetFunctionPtr(ToCKString(name))) : nullptr;
+}
+
+using ConfigureRenderSkip = CKERROR (*)(CKRenderContext *, CKBOOL);
+using ConsumeRenderSkip = CKBOOL (*)(CKRenderContext *);
 
 static void PushDiagnosticKey(SDL_Window *window, SDL_Scancode scancode)
 {
@@ -131,6 +156,70 @@ static bool RunDiagnosticQuitAutomation()
     static const Uint64 delay = requestedDelay && *requestedDelay
         ? (Uint64)strtoull(requestedDelay, nullptr, 10) : 0;
     return delay > 0 && SDL_GetTicks() - startedAt >= delay;
+}
+
+static void RunDiagnosticPracticeAutomation()
+{
+#if defined(__APPLE__) || defined(__linux__)
+    // Comma-separated absolute wall-clock actions used by the native snapshot
+    // regression test, for example: "30000:S,31500:R,32500:R,34000:S,35500:R".
+    // Calling the mod's public automation entry points avoids synthesizing F
+    // keys and therefore also works in headless/VNC sessions.
+    static const char *sequence = getenv("BALLANCE_AUTOMATE_PRACTICE_SEQUENCE");
+    static const char *cursor = sequence;
+    static const Uint64 startedAt = SDL_GetTicks();
+    if (!cursor || !*cursor)
+        return;
+
+    char *end = nullptr;
+    const unsigned long long deadline = strtoull(cursor, &end, 10);
+    if (end == cursor || *end != ':' || !end[1]) {
+        CLogger::Get().Error("Diagnostic practice automation: malformed sequence near '%s'", cursor);
+        cursor = nullptr;
+        return;
+    }
+    if (SDL_GetTicks() - startedAt < deadline)
+        return;
+
+    const char action = end[1];
+    const char *symbol = action == 'S' || action == 's'
+        ? "BML_PracticeCaptureState"
+        : action == 'R' || action == 'r'
+            ? "BML_PracticeRestoreState" : nullptr;
+    int result = 0;
+    if (symbol) {
+        using PracticeAction = int (*)();
+        PracticeAction function = reinterpret_cast<PracticeAction>(
+            dlsym(RTLD_DEFAULT, symbol));
+#if defined(__APPLE__)
+        // BML intentionally loads mods RTLD_LOCAL. Locate the already-loaded
+        // image rather than weakening isolation for every third-party mod.
+        if (!function) {
+            for (uint32_t index = 0; index < _dyld_image_count(); ++index) {
+                const char *image = _dyld_get_image_name(index);
+                if (!image || !strstr(image, "PracticeTools.bmodp"))
+                    continue;
+                void *handle = dlopen(image, RTLD_LAZY | RTLD_NOLOAD);
+                if (handle)
+                    function = reinterpret_cast<PracticeAction>(dlsym(handle, symbol));
+                if (function)
+                    break;
+            }
+        }
+#endif
+        if (function)
+            result = function();
+        else
+            CLogger::Get().Error("Diagnostic practice automation: %s is unavailable", symbol);
+    } else {
+        CLogger::Get().Error("Diagnostic practice automation: unknown action '%c'", action);
+    }
+    CLogger::Get().Info("Diagnostic practice automation: %c at %llu ms returned %d",
+                        action, deadline, result);
+
+    const char *next = strchr(end + 2, ',');
+    cursor = next ? next + 1 : nullptr;
+#endif
 }
 
 static int AsciiICompare(const char *lhs, const char *rhs)
@@ -377,9 +466,9 @@ bool CGamePlayer::Init(const CGameConfig &runtimeConfig, const CGameConfig &pers
         return false;
     }
 
-    CKRECT rc;
-    VxGetClientRect(m_MainWindow, &rc);
-    if (rc.right - rc.left != m_Config.width || rc.bottom - rc.top != m_Config.height)
+    CKRECT rc = {0, 0, m_Config.width, m_Config.height};
+    if (m_SdlWindow && m_MainWindow && VxGetClientRect(m_MainWindow, &rc) &&
+        (rc.right - rc.left != m_Config.width || rc.bottom - rc.top != m_Config.height))
     {
         ResizeWindow();
     }
@@ -418,6 +507,8 @@ bool CGamePlayer::Init(const CGameConfig &runtimeConfig, const CGameConfig &pers
 
 bool CGamePlayer::Load(const char *filename)
 {
+    m_AfterProcessStartup = nullptr;
+    m_ProcessStartupFailed = false;
     if (m_State == eInitial)
     {
         CLogger::Get().Error("Player is not initialized!");
@@ -459,8 +550,10 @@ bool CGamePlayer::Load(const char *filename)
     if (!SetCompositionEnvironment(resolvedFile.CStr()))
         CLogger::Get().Warn("Failed to set composition environment path.");
 
+    CLogger::Get().Info("Load: context reset begin");
     m_CKContext->Reset();
     m_CKContext->ClearAll();
+    CLogger::Get().Info("Load: context reset complete");
 
     // Load the file and fills the array with loaded objects
     CKFile *f = m_CKContext->CreateCKFile();
@@ -470,6 +563,7 @@ bool CGamePlayer::Load(const char *filename)
         return false;
     }
 
+    CLogger::Get().Info("Load: OpenFile begin: %s", resolvedFile.CStr());
     CKERROR res = f->OpenFile(resolvedFile.Str(), (CK_LOAD_FLAGS)(CK_LOAD_DEFAULT | CK_LOAD_CHECKDEPENDENCIES));
     if (res != CK_OK)
     {
@@ -482,6 +576,7 @@ bool CGamePlayer::Load(const char *filename)
         CLogger::Get().Error("Failed to open file: %s", resolvedFile.CStr());
         return false;
     }
+    CLogger::Get().Info("Load: OpenFile complete");
 
     CKObjectArray *array = CreateCKObjectArray();
     if (!array)
@@ -491,6 +586,7 @@ bool CGamePlayer::Load(const char *filename)
         return false;
     }
 
+    CLogger::Get().Info("Load: LoadFileData begin");
     res = f->LoadFileData(array);
     if (res != CK_OK)
     {
@@ -499,11 +595,15 @@ bool CGamePlayer::Load(const char *filename)
         DeleteCKObjectArray(array);
         return false;
     }
+    CLogger::Get().Info("Load: LoadFileData complete");
 
     m_CKContext->DeleteCKFile(f);
     DeleteCKObjectArray(array);
 
-    return FinishLoad(filename, resolvedFile.CStr());
+    CLogger::Get().Info("Load: FinishLoad begin");
+    const bool finishResult = FinishLoad(filename, resolvedFile.CStr());
+    CLogger::Get().Info("Load: FinishLoad complete (%d)", finishResult ? 1 : 0);
+    return finishResult;
 }
 
 void CGamePlayer::Run()
@@ -624,11 +724,14 @@ void CGamePlayer::AdvanceBehaviorDeadline()
 
 bool CGamePlayer::Update()
 {
+    if (m_ProcessStartupFailed)
+        return false;
     DrainPlayerCommands();
 
     SDL_PumpEvents();
     RunDiagnosticMenuAutomation(m_SdlWindow);
     RunDiagnosticResizeAutomation(m_SdlWindow);
+    RunDiagnosticPracticeAutomation();
     if (RunDiagnosticQuitAutomation())
         return false;
     SDL_Event event;
@@ -692,6 +795,29 @@ bool CGamePlayer::Update()
         RefreshDisplaySchedule(now);
     RefreshFrameRateSchedule(now);
 
+    // Deterministic test/TAS fast-forward.  Fixed CK time and TAS input are
+    // consumed once per Process(), so batching simulation samples changes only
+    // wall-clock presentation, never the recorded timeline.  Keep one render
+    // and one SDL event pump per batch so loading screens and automation can
+    // still make progress without paying the display refresh delay.
+    static const int fastForwardBatch = []() {
+        const char *value = getenv("BALLANCE_FAST_FORWARD_BATCH");
+        const int parsed = value ? atoi(value) : 0;
+        return parsed > 0 ? parsed : 0;
+    }();
+    const char *fastForwardActive = getenv("BALLANCE_FAST_FORWARD_ACTIVE");
+    if (fastForwardBatch > 0 && fastForwardActive &&
+        fastForwardActive[0] == '1')
+    {
+        for (int sample = 0; sample < fastForwardBatch; ++sample)
+            Process();
+        Render();
+        m_NextBehaviorDeadlineNs = SDL_GetTicksNS();
+        m_BehaviorDeadlineRemainder = 0;
+        m_NextRenderDeadlineNs = m_NextBehaviorDeadlineNs;
+        return true;
+    }
+
     // Loading a level, moving between displays or suspending the process can
     // leave a large wall-clock gap. Do not fast-forward gameplay to repay it;
     // resume the deterministic timeline from the current instant instead.
@@ -737,11 +863,23 @@ bool CGamePlayer::Update()
 
 void CGamePlayer::Process()
 {
+    const bool wasPlaying = m_CKContext->IsPlaying() != FALSE;
     m_CKContext->Process();
+    if (wasPlaying && m_AfterProcessStartup) {
+        const CKERROR result = m_AfterProcessStartup(m_CKContext);
+        if (result != CK_OK) {
+            CLogger::Get().Error("Player-driven BML startup failed after Process: %d", result);
+            m_ProcessStartupFailed = true;
+            m_CKContext->Pause();
+        }
+    }
 }
 
 void CGamePlayer::Render()
 {
+    auto consume = reinterpret_cast<ConsumeRenderSkip>(BmlFunction("BML_ConsumePlayerRenderSkipV1"));
+    if (consume && consume(m_RenderContext))
+        return;
     m_RenderContext->Render();
 
     // Diagnostic capture for environments where the window server cannot
@@ -831,6 +969,31 @@ bool CGamePlayer::InitWindow()
     SDL_SetMainReady();
     ConfigureSdlVideoDriver();
 
+    CLogger::Get().Info("Window setup: headless=%s rasterizer=%s",
+                        getenv("BALLANCE_HEADLESS") ? getenv("BALLANCE_HEADLESS") : "<unset>",
+                        m_Config.rasterizer.CStr());
+
+    // The null rasterizer does not consume a native window.  Keeping this
+    // opt-in lets deterministic TAS/physics tests run from SSH and CI without
+    // an Aqua/Win32 display while leaving every interactive launch unchanged.
+    // CK's input plugin is still loaded so the TAS input hook sees the same
+    // manager and object graph as a displayed run.
+    if (getenv("BALLANCE_HEADLESS") ||
+        m_Config.rasterizer.Compare("null") == 0)
+    {
+        m_Config.childWindowRendering = false;
+        m_Config.fullscreen = false;
+        m_SdlWindow = NULL;
+#ifdef _WIN32
+        m_MainWindow = NULL;
+#else
+        m_MainWindow = NULL;
+#endif
+        m_RenderWindow = NULL;
+        CLogger::Get().Info("Headless null-rasterizer window mode enabled.");
+        return true;
+    }
+
     if (!SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_EVENTS))
     {
         CLogger::Get().Error("Failed to initialize SDL video backend: %s", SDL_GetError());
@@ -866,7 +1029,26 @@ bool CGamePlayer::InitWindow()
         SDL_SetWindowPosition(m_SdlWindow, x, y);
     }
 
+#ifdef _WIN32
+    // CK and legacy Windows plugins define WIN_HANDLE as HWND.  Keep SDL's
+    // ownership in m_SdlWindow, but publish the native handle through CK so
+    // Win32 integrations such as BML+'s ImGui input backend receive the type
+    // their ABI promises.  The SDL_gpu rasterizer can map this HWND back to
+    // the owning SDL_Window through SDL's window properties.
+    m_MainWindow = (WIN_HANDLE)SDL_GetPointerProperty(
+        SDL_GetWindowProperties(m_SdlWindow),
+        SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
+    if (!m_MainWindow)
+    {
+        CLogger::Get().Error("Failed to retrieve Win32 window handle: %s", SDL_GetError());
+        SDL_DestroyWindow(m_SdlWindow);
+        m_SdlWindow = NULL;
+        SDL_QuitSubSystem(SDL_INIT_VIDEO);
+        return false;
+    }
+#else
     m_MainWindow = (WIN_HANDLE)m_SdlWindow;
+#endif
     m_RenderWindow = NULL;
 
     m_Config.posX = x;
@@ -894,21 +1076,25 @@ void CGamePlayer::ShutdownWindow()
 
 bool CGamePlayer::InitEngine(WIN_HANDLE mainWindow)
 {
+    CLogger::Get().Info("InitEngine: CKStartUp begin");
     if (CKStartUp() != CK_OK)
     {
         CLogger::Get().Error("CK Engine can not start up!");
         return false;
     }
+    CLogger::Get().Info("InitEngine: CKStartUp complete");
 
     CLogger::Get().Debug("CK Engine starts up successfully.");
 
     CKPluginManager *pluginManager = CKGetPluginManager();
+    CLogger::Get().Info("InitEngine: InitPlugins begin");
     if (!InitPlugins(pluginManager))
     {
         CLogger::Get().Error("Failed to initialize plugins.");
         CKShutdown();
         return false;
     }
+    CLogger::Get().Info("InitEngine: InitPlugins complete");
 
     int renderEngine = FindRenderEngine(pluginManager);
     if (renderEngine == -1)
@@ -918,11 +1104,24 @@ bool CGamePlayer::InitEngine(WIN_HANDLE mainWindow)
         return false;
     }
 
-    CLogger::Get().Debug("Render Engine initialized.");
-#if CKVERSION == 0x13022002
-    CKERROR res = CKCreateContext(&m_CKContext, mainWindow, renderEngine, 0);
+    CKDWORD contextFlags = 0;
+    if (m_Config.legacyTasSort) {
+#ifdef PLAYER_HAS_CONTEXT_SORT_POLICY
+        contextFlags |= CK_CONFIG_WINE_MSVCRT_SORT;
 #else
-    CKERROR res = CKCreateContext(&m_CKContext, mainWindow, 0);
+        CLogger::Get().Error("LegacyTASSort requires the reconstructed CK2 SDK.");
+        CKShutdown();
+        return false;
+#endif
+    }
+    CLogger::Get().Info("Behavior sort policy: %s",
+                        m_Config.legacyTasSort ? "Wine 11 legacy TAS" : "host native");
+    CLogger::Get().Debug("Render Engine initialized.");
+    CLogger::Get().Info("InitEngine: CKCreateContext begin (render engine %d)", renderEngine);
+#if CKVERSION == 0x13022002
+    CKERROR res = CKCreateContext(&m_CKContext, mainWindow, renderEngine, contextFlags);
+#else
+    CKERROR res = CKCreateContext(&m_CKContext, mainWindow, contextFlags);
 #endif
     if (res != CK_OK)
     {
@@ -930,33 +1129,43 @@ bool CGamePlayer::InitEngine(WIN_HANDLE mainWindow)
         ShutdownEngine();
         return false;
     }
+    CLogger::Get().Info("InitEngine: CKCreateContext complete");
 
     CLogger::Get().Debug("CK Engine initialized.");
 
     m_CKContext->SetVirtoolsVersion(CK_VIRTOOLS_DEV, 0x2000043);
     m_CKContext->SetInterfaceMode(FALSE, LogRedirect, 0);
 
+    CLogger::Get().Info("InitEngine: SetupManagers begin");
     if (!SetupManagers())
     {
         CLogger::Get().Error("Failed to setup managers.");
         ShutdownEngine();
         return false;
     }
+    CLogger::Get().Info("InitEngine: SetupManagers complete");
 
+    CLogger::Get().Info("InitEngine: SetupPaths begin");
     if (!SetupPaths())
     {
         CLogger::Get().Error("Failed to setup paths.");
         ShutdownEngine();
         return false;
     }
+    CLogger::Get().Info("InitEngine: SetupPaths complete");
 
     return true;
 }
 
 void CGamePlayer::ShutdownEngine()
 {
+    // Plugin function pointers cannot outlive the engine's loaded modules.
+    m_AfterProcessStartup = nullptr;
     if (m_CKContext)
     {
+        if (auto configure = reinterpret_cast<ConfigureRenderSkip>(
+                BmlFunction("BML_SetPlayerDrivenRenderSkipV1")))
+            configure(m_RenderContext, FALSE);
         m_CKContext->Reset();
         m_CKContext->ClearAll();
 
@@ -1089,6 +1298,57 @@ bool CGamePlayer::InitDriver()
     return true;
 }
 
+bool CGamePlayer::ConfigureBmlStartup()
+{
+    const char *option = getenv("BALLANCE_BML_START_AFTER_PROCESS");
+    auto *plugins = CKGetPluginManager();
+    auto *entry = plugins ? plugins->FindComponent(CKGUID(0x32a40332, 0x3bf12a51)) : nullptr;
+    auto *dll = entry ? plugins->GetPluginDllInfo(entry->m_PluginDllIndex) : nullptr;
+    using Configure = CKERROR (*)(CKContext *, CKBOOL);
+    auto configure = dll ? reinterpret_cast<Configure>(dll->GetFunctionPtr(
+        ToCKString("BML_SetPlayerDrivenStartupV1"))) : nullptr;
+    auto complete = dll ? reinterpret_cast<AfterProcessStartup>(dll->GetFunctionPtr(
+        ToCKString("BML_CompletePlayerStepV1"))) : nullptr;
+    // A supporting BML initializes after the composition's first Process has
+    // completed all manager cleanup. Negotiate this per loaded plugin/context;
+    // ordinary launches must not depend on a diagnostic environment variable.
+    // Older BML versions without this interface retain their OnCKPlay startup.
+    if ((configure != nullptr) != (complete != nullptr)) {
+        CLogger::Get().Error("BML provides an incomplete version 1 Player startup interface.");
+        return false;
+    }
+    if (option && strcmp(option, "0") != 0 && strcmp(option, "1") != 0) {
+        CLogger::Get().Error("BALLANCE_BML_START_AFTER_PROCESS must be 0 or 1.");
+        return false;
+    }
+    const bool requested = option ? strcmp(option, "1") == 0 : configure != nullptr;
+    if (requested && (!configure || !complete)) {
+        CLogger::Get().Error("Deferred BML startup requires the version 1 Player startup interface.");
+        return false;
+    }
+    if (configure && configure(m_CKContext, requested ? TRUE : FALSE) != CK_OK) {
+        CLogger::Get().Error("BML rejected Player startup configuration.");
+        return false;
+    }
+    auto configureRender = reinterpret_cast<ConfigureRenderSkip>(
+        BmlFunction("BML_SetPlayerDrivenRenderSkipV1"));
+    auto consumeRender = reinterpret_cast<ConsumeRenderSkip>(
+        BmlFunction("BML_ConsumePlayerRenderSkipV1"));
+    if ((configureRender != nullptr) != (consumeRender != nullptr) ||
+        (configureRender && configureRender(m_RenderContext, TRUE) != CK_OK)) {
+        CLogger::Get().Error("BML render-skip negotiation failed.");
+        return false;
+    }
+    if (configureRender)
+        CLogger::Get().Info("BML render skip: Player-driven version 1.");
+    m_AfterProcessStartup = requested ? complete : nullptr;
+    if (configure)
+        CLogger::Get().Info("BML startup: %s (%s)",
+                           requested ? "after first Process" : "OnCKPlay",
+                           option ? "explicit override" : "negotiated");
+    return true;
+}
+
 bool CGamePlayer::FinishLoad(const char *filename, const char *resolvedFile)
 {
     if (!filename)
@@ -1150,6 +1410,9 @@ bool CGamePlayer::FinishLoad(const char *filename, const char *resolvedFile)
 
         CLogger::Get().Debug("Hotfixes applied on script.");
     }
+
+    if (!ConfigureBmlStartup())
+        return false;
 
     // Launch the default scene
     level->LaunchScene(NULL);
@@ -1404,7 +1667,10 @@ bool CGamePlayer::SetupManagers()
     }
     m_TimeManager->SetFixedDeltaTime(kBehaviorDeltaMs);
     m_TimeManager->SetFixedProcessRate((float)kBehaviorRate);
-    m_TimeManager->SetFixedPhysicsTimeScale(2.0f);
+    // Set Physics Globals owns the game's factor, including tutorial freezes.
+    // A second host multiplier would double the script's factor after BML's
+    // physics hook is correctly bound to PostProcess on native platforms.
+    m_TimeManager->SetFixedPhysicsTimeScale(1.0f);
     m_TimeManager->SetBehavioralRateLimit((float)kBehaviorRate);
     m_TimeManager->ChangeLimitOptions(CK_FRAMERATE_SYNC, CK_BEHRATE_LIMIT);
     ResetFrameScheduler();

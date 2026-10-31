@@ -61,6 +61,7 @@ private:
     bool InitDriver();
 
     bool FinishLoad(const char *filename, const char *resolvedFile);
+    bool ConfigureBmlStartup();
     void ReportMissingGuids(CKFile *file, const char *resolvedFile);
 
     bool InitPlugins(CKPluginManager *pluginManager);
@@ -152,6 +153,9 @@ private:
     int m_ScheduledRefreshDenominator;
     CGameConfig m_Config;
     CGameConfig m_PersistentConfig;
+    using AfterProcessStartup = CKERROR (*)(CKContext *);
+    AfterProcessStartup m_AfterProcessStartup = nullptr;
+    bool m_ProcessStartupFailed = false;
 };
 
 #endif /* PLAYER_GAMEPLAYER_H */

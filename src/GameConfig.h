@@ -38,6 +38,7 @@ enum LogMode
   X_INT  ("Startup",  "LogMode",                 logMode,                 1,                  0,                                      '\0') \
   X_BOOL ("Startup",  "Verbose",                 verbose,                 false,              "--verbose",                             '\0', true) \
   X_BOOL ("Startup",  "ManualSetup",             manualSetup,             false,              "--manual-setup",                        'm',  true) \
+  X_BOOL ("Game",     "LegacyTASSort",           legacyTasSort,           false,              "--legacy-tas-sort",                     '\0', true) \
   X_STRING("Graphics", "Rasterizer",             rasterizer,              PLAYER_DEFAULT_RASTERIZER, "--rasterizer",                   '\0') \
   X_INT  ("Graphics", "Driver",                  driver,                  0,                  "--video-driver",                        'v') \
   X_INT  ("Graphics", "BitsPerPixel",            bpp,                     PLAYER_DEFAULT_BPP, "--bpp",                                 'b') \
