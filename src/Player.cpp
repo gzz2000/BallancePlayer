@@ -29,11 +29,20 @@ namespace fs = std::filesystem;
 // normal window-event path that updates render extents and mouse coordinates.
 extern "C" EMSCRIPTEN_KEEPALIVE int BallanceWebResize(int width, int height)
 {
-    if (width < 320 || height < 240 || width > 4096 || height > 4096)
+    if (width < 1 || height < 1 || width > 8192 || height > 8192)
         return 0;
     int count = 0;
     SDL_Window **windows = SDL_GetWindows(&count);
     const bool result = count == 1 && SDL_SetWindowSize(windows[0], width, height);
+    if (result) {
+        // A game script may have reset only the render context, or the browser
+        // may have changed DPR without changing the logical SDL window size.
+        // Force the regular drawable refresh even when SetWindowSize is a no-op.
+        SDL_Event event{};
+        event.type = SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED;
+        event.window.windowID = SDL_GetWindowID(windows[0]);
+        SDL_PushEvent(&event);
+    }
     SDL_free(windows);
     return result ? 1 : 0;
 }

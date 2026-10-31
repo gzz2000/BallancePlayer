@@ -2,6 +2,9 @@
 extern "C" void SdlInputManagerSetWebDeadline(unsigned long long);
 #endif
 #include "GamePlayer.h"
+#ifdef PLAYER_WEB_INTERACTIVE
+#include "CKResponsiveViewport.h"
+#endif
 #include "PlayerOptions.h"
 #if __has_include("CKSortPolicy.h")
 #include "CKSortPolicy.h"
@@ -499,6 +502,9 @@ bool CGamePlayer::Init(const CGameConfig &runtimeConfig, const CGameConfig &pers
         return false;
     }
 
+#ifdef PLAYER_WEB_INTERACTIVE
+    CKSetResponsiveViewport(m_RenderContext, TRUE);
+#endif
     CLogger::Get().Debug("Render Context created.");
 
     if (m_Config.fullscreen)
@@ -764,8 +770,10 @@ bool CGamePlayer::Update()
         {
         case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
             return false;
-        case SDL_EVENT_WINDOW_RESIZED:
         case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+            OnSize(true);
+            break;
+        case SDL_EVENT_WINDOW_RESIZED:
             OnSize();
             break;
         case SDL_EVENT_WINDOW_MOVED:
@@ -2076,7 +2084,7 @@ void CGamePlayer::OnMove()
     }
 }
 
-void CGamePlayer::OnSize()
+void CGamePlayer::OnSize(bool forceDrawable)
 {
     if (m_MainWindow)
     {
@@ -2093,7 +2101,7 @@ void CGamePlayer::OnSize()
                 {
                     m_Config.width = width;
                     m_Config.height = height;
-                    if (m_RenderContext && (m_RenderContext->GetWidth() != width || m_RenderContext->GetHeight() != height))
+                    if (m_RenderContext && (forceDrawable || m_RenderContext->GetWidth() != width || m_RenderContext->GetHeight() != height))
                     {
                         CKERROR res = m_RenderContext->Resize(0, 0, width, height, VX_RESIZE_NOMOVE);
                         if (res != CK_OK)

@@ -104,7 +104,7 @@ private:
 
     void OnDestroy();
     void OnMove();
-    void OnSize();
+    void OnSize(bool forceDrawable = false);
     void OnPaint();
     void OnClose();
     void OnActivateApp(bool active);
