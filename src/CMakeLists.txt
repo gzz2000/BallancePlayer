@@ -233,6 +233,18 @@ if (EMSCRIPTEN)
         "-sENVIRONMENT=web,worker" "-sNODERAWFS=0"
         "-sMODULARIZE=1" "-sEXPORT_ES6=1" "-sINVOKE_RUN=0"
         "-sEXPORTED_RUNTIME_METHODS=['FS','ENV','callMain']")
+    add_executable(PlayerBrowser EXCLUDE_FROM_ALL ${_web_sources})
+    foreach (_property IN ITEMS INCLUDE_DIRECTORIES COMPILE_DEFINITIONS
+            COMPILE_OPTIONS COMPILE_FEATURES LINK_LIBRARIES LINK_OPTIONS)
+        get_target_property(_value PlayerWeb ${_property})
+        if (_value)
+            set_property(TARGET PlayerBrowser PROPERTY ${_property} "${_value}")
+        endif ()
+    endforeach ()
+    target_compile_definitions(PlayerBrowser PRIVATE PLAYER_WEB_INTERACTIVE=1)
+    target_link_options(PlayerBrowser PRIVATE "-sEXIT_RUNTIME=0"
+        "-sEXPORTED_RUNTIME_METHODS=['FS','ENV','callMain','requestFullscreen']")
+    set_target_properties(PlayerBrowser PROPERTIES SUFFIX ".mjs")
 endif ()
 
 set(_player_sdl_runtime_target "")

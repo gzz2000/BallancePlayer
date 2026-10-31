@@ -1,4 +1,7 @@
-﻿#include "GamePlayer.h"
+﻿#ifdef PLAYER_WEB_INTERACTIVE
+extern "C" void SdlInputManagerSetWebDeadline(unsigned long long);
+#endif
+#include "GamePlayer.h"
 #include "PlayerOptions.h"
 #if __has_include("CKSortPolicy.h")
 #include "CKSortPolicy.h"
@@ -809,6 +812,9 @@ bool CGamePlayer::Update()
     if (fastForwardBatch > 0 && fastForwardActive &&
         fastForwardActive[0] == '1')
     {
+#ifdef PLAYER_WEB_INTERACTIVE
+        SdlInputManagerSetWebDeadline(0);
+#endif
         for (int sample = 0; sample < fastForwardBatch; ++sample)
             Process();
         Render();
@@ -831,6 +837,9 @@ bool CGamePlayer::Update()
         m_NextRenderDeadlineNs = now;
 
     while (now >= m_NextBehaviorDeadlineNs) {
+#ifdef PLAYER_WEB_INTERACTIVE
+        SdlInputManagerSetWebDeadline(m_NextBehaviorDeadlineNs);
+#endif
         AdvanceBehaviorDeadline();
         Process();
         now = SDL_GetTicksNS();
@@ -845,6 +854,11 @@ bool CGamePlayer::Update()
         }
     }
 
+#ifdef PLAYER_WEB_INTERACTIVE
+    // Browser presentation follows rAF; simulation above keeps its independent
+    // integer sample clock. Never block the event loop waiting for the next tick.
+    Render();
+#else
     if (now >= m_NextRenderDeadlineNs) {
         do {
             m_NextRenderDeadlineNs += m_RenderPeriodNs;
@@ -857,6 +871,7 @@ bool CGamePlayer::Update()
         ? m_NextBehaviorDeadlineNs : m_NextRenderDeadlineNs;
     if (nextDeadline > now)
         SDL_DelayPrecise(nextDeadline - now);
+#endif
 
     return true;
 }
@@ -880,7 +895,14 @@ void CGamePlayer::Render()
     auto consume = reinterpret_cast<ConsumeRenderSkip>(BmlFunction("BML_ConsumePlayerRenderSkipV1"));
     if (consume && consume(m_RenderContext))
         return;
-    m_RenderContext->Render();
+    const CKERROR renderResult = m_RenderContext->Render();
+#ifdef PLAYER_WEB_INTERACTIVE
+    static CKERROR lastRenderResult = CK_OK;
+    if (renderResult != lastRenderResult) {
+        CLogger::Get().Info("Browser render status: %d", renderResult);
+        lastRenderResult = renderResult;
+    }
+#endif
 
     // Diagnostic capture for environments where the window server cannot
     // screenshot a Metal swapchain (for example, some VNC display modes).

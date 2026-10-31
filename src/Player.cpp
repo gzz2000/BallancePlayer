@@ -3,7 +3,12 @@
 
 #include <filesystem>
 #include <cstdlib>
+#include <cstdio>
 #include <system_error>
+#include <memory>
+#ifdef PLAYER_WEB_INTERACTIVE
+#include <emscripten.h>
+#endif
 
 #include "CmdlineParser.h"
 #include "GameConfig.h"
@@ -18,6 +23,28 @@ static bool SetDatabaseDirectoryEnvironment(const char *path);
 static void ShowErrorMessage(const char *text);
 
 namespace fs = std::filesystem;
+
+#ifdef PLAYER_WEB_INTERACTIVE
+// The host requests logical canvas dimensions through SDL. This preserves the
+// normal window-event path that updates render extents and mouse coordinates.
+extern "C" EMSCRIPTEN_KEEPALIVE int BallanceWebResize(int width, int height)
+{
+    if (width < 320 || height < 240 || width > 4096 || height > 4096)
+        return 0;
+    int count = 0;
+    SDL_Window **windows = SDL_GetWindows(&count);
+    const bool result = count == 1 && SDL_SetWindowSize(windows[0], width, height);
+    SDL_free(windows);
+    return result ? 1 : 0;
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE void BallanceWebRequestQuit()
+{
+    SDL_Event event{};
+    event.type = SDL_EVENT_QUIT;
+    SDL_PushEvent(&event);
+}
+#endif
 
 int main(int argc, char **argv)
 {
@@ -52,7 +79,8 @@ int main(int argc, char **argv)
     if (runtimeConfig.verbose)
         CLogger::Get().SetLevel(CLogger::LEVEL_DEBUG);
 
-    CGamePlayer player;
+    auto owner = std::make_unique<CGamePlayer>();
+    CGamePlayer &player = *owner;
     if (!player.Init(runtimeConfig, persistentConfig))
     {
         CLogger::Get().Error("Failed to initialize player!");
@@ -70,8 +98,25 @@ int main(int argc, char **argv)
     }
 
     player.Play();
+#ifdef PLAYER_WEB_INTERACTIVE
+    // rAF owns the player after main returns; stack-local ownership would
+    // destroy the game before the first browser callback.
+    emscripten_set_main_loop_arg([](void *argument) {
+        auto *running = static_cast<CGamePlayer *>(argument);
+        if (!running->Update()) {
+            emscripten_cancel_main_loop();
+            running->Shutdown();
+            delete running;
+            // The browser runtime remains alive for data export. Unlike a
+            // native process exit, cancelling rAF does not flush libc streams.
+            std::fflush(nullptr);
+            EM_ASM({ Module['onBallanceExit']?.(); });
+        }
+    }, owner.release(), 0, false);
+#else
     player.Run();
     player.Shutdown();
+#endif
 
     return 0;
 }

@@ -195,7 +195,8 @@ namespace playeroptions
 
     bool IsRasterizerName(const char *name)
     {
-        return OptionNameEquals(name, "sdlgpu") || OptionNameEquals(name, "null");
+        return OptionNameEquals(name, "sdlgpu") || OptionNameEquals(name, "null") ||
+               OptionNameEquals(name, "webgpu");
     }
 
     const char *RasterizerNameForDriver(const char *description)
@@ -205,6 +206,8 @@ namespace playeroptions
             return "sdlgpu";
         if (OptionNameEquals(description, "NULL Rasterizer"))
             return "null";
+        if (OptionNameEquals(description, "WebGPU"))
+            return "webgpu";
         return "";
     }
 
