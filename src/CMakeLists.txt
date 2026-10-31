@@ -215,6 +215,26 @@ target_include_directories(${PLAYER_NAME} PRIVATE
 )
 
 set(_player_runtime_dependency_args)
+if (EMSCRIPTEN)
+    # Same engine and host code, with browser/Worker filesystem bindings instead
+    # of Node's NODERAWFS. Run this qualification target in a dedicated Worker;
+    # the interactive browser host will supply a yielding frame loop separately.
+    get_target_property(_web_sources ${PLAYER_NAME} SOURCES)
+    add_executable(PlayerWeb EXCLUDE_FROM_ALL ${_web_sources})
+    foreach (_property IN ITEMS INCLUDE_DIRECTORIES COMPILE_DEFINITIONS
+            COMPILE_OPTIONS COMPILE_FEATURES LINK_LIBRARIES)
+        get_target_property(_value ${PLAYER_NAME} ${_property})
+        if (_value)
+            set_property(TARGET PlayerWeb PROPERTY ${_property} "${_value}")
+        endif ()
+    endforeach ()
+    set_target_properties(PlayerWeb PROPERTIES SUFFIX ".mjs")
+    target_link_options(PlayerWeb PRIVATE
+        "-sENVIRONMENT=web,worker" "-sNODERAWFS=0"
+        "-sMODULARIZE=1" "-sEXPORT_ES6=1" "-sINVOKE_RUN=0"
+        "-sEXPORTED_RUNTIME_METHODS=['FS','ENV','callMain']")
+endif ()
+
 set(_player_sdl_runtime_target "")
 if (TARGET SDL3::SDL3-shared)
     set(_player_sdl_runtime_target SDL3::SDL3-shared)
