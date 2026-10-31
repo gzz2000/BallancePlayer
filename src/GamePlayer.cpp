@@ -154,6 +154,16 @@ static void RunDiagnosticResizeAutomation(SDL_Window *window)
 
 static bool RunDiagnosticQuitAutomation()
 {
+    // Qualification runners can finish at the actual end of playback instead
+    // of keeping every completed game idle until a wall-clock deadline.
+    static const bool afterPlayback = getenv("BALLANCE_AUTOMATE_QUIT_AFTER_FAST_FORWARD") != nullptr;
+    static bool observedPlayback = false;
+    if (afterPlayback) {
+        const char *active = getenv("BALLANCE_FAST_FORWARD_ACTIVE");
+        const bool playing = active && active[0] == '1';
+        if (observedPlayback && !playing) return true;
+        observedPlayback |= playing;
+    }
     static const char *requestedDelay = getenv("BALLANCE_AUTOMATE_QUIT_AFTER_MS");
     static const Uint64 startedAt = SDL_GetTicks();
     static const Uint64 delay = requestedDelay && *requestedDelay

@@ -38,6 +38,11 @@ extern "C" EMSCRIPTEN_KEEPALIVE int BallanceWebResize(int width, int height)
     return result ? 1 : 0;
 }
 
+extern "C" EMSCRIPTEN_KEEPALIVE void BallanceWebFlushFiles()
+{
+    std::fflush(nullptr);
+}
+
 extern "C" EMSCRIPTEN_KEEPALIVE void BallanceWebRequestQuit()
 {
     SDL_Event event{};

@@ -344,3 +344,12 @@ if (NOT DEFINED CKRE_BUILD_SDL_GPU_RASTERIZER OR CKRE_BUILD_SDL_GPU_RASTERIZER)
             LINK_ONLY
     )
 endif ()
+
+if (CKRE_BUILD_WEBGPU_RASTERIZER)
+    _player_declare_static_module(CKWebGpuRasterizer
+            RUNTIME_TARGET CKWebGpuRasterizer
+            STATIC_TARGET CKWebGpuRasterizerStatic
+            COMPILE_DEFINITION BALLANCE_STATIC_HAVE_CKWEBGPURASTERIZER
+            LINK_ONLY
+    )
+endif ()

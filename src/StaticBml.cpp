@@ -10,6 +10,10 @@ extern "C" IMod *LegacyTAS_Static_Entry(IBML *);
 extern "C" void LegacyTAS_Static_Exit(IMod *);
 #endif
 
+#ifdef BALLANCE_STATIC_PRACTICE
+extern "C" IMod *Practice_Static_Entry(IBML *);
+extern "C" void Practice_Static_Exit(IMod *);
+#endif
 int BML_Static_GetPluginInfoCount();
 CKPluginInfo *BML_Static_GetPluginInfo(int);
 void BML_Static_RegisterBehaviorDeclarations(XObjectDeclarationArray *);
@@ -41,6 +45,10 @@ bool RegisterStaticBml(CKPluginManager *plugins) {
 #endif
 #ifdef BALLANCE_STATIC_LEGACY_TAS
     if (!BML_RegisterStaticModFactory({"LegacyTASRuntime", LegacyTAS_Static_Entry, LegacyTAS_Static_Exit}))
+        return false;
+#endif
+#ifdef BALLANCE_STATIC_PRACTICE
+    if (!BML_RegisterStaticModFactory({"PracticeTools", Practice_Static_Entry, Practice_Static_Exit}))
         return false;
 #endif
     const auto result = plugins->RegisterStaticPlugin(

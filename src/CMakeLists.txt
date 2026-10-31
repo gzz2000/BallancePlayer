@@ -204,6 +204,10 @@ if (TARGET BallanceTAS AND TAS_BUILD_STATIC)
     target_link_libraries(${PLAYER_NAME} PRIVATE BallanceTAS)
     target_compile_definitions(${PLAYER_NAME} PRIVATE BALLANCE_STATIC_TAS=1)
 endif ()
+if (TARGET PracticeTools AND PRACTICE_BUILD_STATIC)
+    target_link_libraries(${PLAYER_NAME} PRIVATE PracticeTools)
+    target_compile_definitions(${PLAYER_NAME} PRIVATE BALLANCE_STATIC_PRACTICE=1)
+endif ()
 if (TARGET LegacyTASRuntime AND LEGACY_TAS_BUILD_STATIC)
     target_link_libraries(${PLAYER_NAME} PRIVATE LegacyTASRuntime)
     target_compile_definitions(${PLAYER_NAME} PRIVATE BALLANCE_STATIC_LEGACY_TAS=1)
@@ -242,8 +246,8 @@ if (EMSCRIPTEN)
         endif ()
     endforeach ()
     target_compile_definitions(PlayerBrowser PRIVATE PLAYER_WEB_INTERACTIVE=1)
-    target_link_options(PlayerBrowser PRIVATE "-sEXIT_RUNTIME=0"
-        "-sEXPORTED_RUNTIME_METHODS=['FS','ENV','callMain','requestFullscreen']")
+    target_link_options(PlayerBrowser PRIVATE "-sEXIT_RUNTIME=0" "-lidbfs.js"
+        "-sEXPORTED_RUNTIME_METHODS=['FS','IDBFS','ENV','callMain','ccall','requestFullscreen']")
     set_target_properties(PlayerBrowser PROPERTIES SUFFIX ".mjs")
 endif ()
 
@@ -292,6 +296,12 @@ install(TARGETS ${PLAYER_NAME}
         LIBRARY DESTINATION Bin COMPONENT Runtime
         FRAMEWORK DESTINATION Bin COMPONENT Runtime
 )
+
+if (EMSCRIPTEN)
+    # Emscripten's executable target installs only the JS launcher by default.
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/${PLAYER_NAME}.wasm"
+            DESTINATION Bin COMPONENT Runtime)
+endif ()
 
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/Player.ini.in"
         "${CMAKE_CURRENT_BINARY_DIR}/Player.ini" @ONLY)
