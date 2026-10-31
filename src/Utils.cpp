@@ -390,7 +390,7 @@ namespace utils
         if (!section || !name || !str || size == 0 || !filename)
             return false;
 
-        IniFile ini;
+        PlayerIniFile ini;
         if (!ini.ParseFromFile(filename))
             return false;
 
@@ -436,7 +436,7 @@ namespace utils
         if (!section || !name || !value || !filename)
             return false;
 
-        IniFile ini;
+        PlayerIniFile ini;
         ini.ParseFromFile(filename);
         if (!ini.SetValue(section, name, value))
             return false;

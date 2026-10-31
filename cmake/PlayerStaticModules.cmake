@@ -15,6 +15,7 @@ function(_player_declare_static_module module_id)
             GET_INFO_COUNT
             GET_INFO
             GET_READER
+            GET_FUNCTION
             REGISTER_DECLARATIONS
     )
     cmake_parse_arguments(PARSE_ARGV 1 _module "${_options}" "${_one_value_args}" "")
@@ -286,6 +287,7 @@ _player_declare_static_module(physics_RT
         DISPLAY_NAME physics_RT
         GET_INFO_COUNT CKGet_TT_Physics_PluginInfoCount
         GET_INFO CKGet_TT_Physics_PluginInfo
+        GET_FUNCTION TT_PhysicsResolveStaticFunction
         REGISTER_DECLARATIONS Register_TT_Physics_BehaviorDeclarations
 )
 _player_declare_static_module(TT_DatabaseManager_RT
@@ -331,6 +333,7 @@ _player_declare_static_module(TT_Toolbox_RT
         DISPLAY_NAME TT_Toolbox_RT
         GET_INFO_COUNT CKGet_TT_Toolbox_PluginInfoCount
         GET_INFO CKGet_TT_Toolbox_PluginInfo
+        GET_FUNCTION TT_TimeResolveStaticFunction
         REGISTER_DECLARATIONS Register_TT_Toolbox_BehaviorDeclarations
 )
 if (NOT DEFINED CKRE_BUILD_SDL_GPU_RASTERIZER OR CKRE_BUILD_SDL_GPU_RASTERIZER)

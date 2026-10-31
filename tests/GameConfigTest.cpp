@@ -456,7 +456,7 @@ TEST_F(GameConfigTest, IniFileBackendKeepsUtf8ValuesAsBytes) {
 }
 
 TEST_F(GameConfigTest, IniFileParsesAndWritesThroughVxMathStrings) {
-    IniFile ini;
+    PlayerIniFile ini;
     ASSERT_TRUE(ini.ParseFromString(
         "; leading comment\n"
         "[Graphics]\n"

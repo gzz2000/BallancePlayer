@@ -8,9 +8,9 @@
 #include "XHashTable.h"
 #include "XString.h"
 
-class IniFile {
+class PlayerIniFile {
 public:
-    IniFile();
+    PlayerIniFile();
 
     struct Entry {
         XString key;
@@ -68,8 +68,8 @@ private:
     const Section *FindSection(const XString &sectionName) const;
     Section *AddSection(const XString &sectionName);
 
-    IniFile(const IniFile &);
-    IniFile &operator=(const IniFile &);
+    PlayerIniFile(const PlayerIniFile &);
+    PlayerIniFile &operator=(const PlayerIniFile &);
 };
 
 #endif // PLAYER_INIFILE_H

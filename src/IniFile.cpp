@@ -14,33 +14,33 @@ static XString SubstringLength(const XString &str, XWORD start, XWORD length)
     return length == 0 ? XString() : str.Substring(start, length);
 }
 
-IniFile::IniFile()
+PlayerIniFile::PlayerIniFile()
     : m_SectionIndexDirty(true)
 {
 }
 
-IniFile::Entry::Entry()
+PlayerIniFile::Entry::Entry()
     : isComment(false), isEmpty(false)
 {
 }
 
-IniFile::Section::Section()
+PlayerIniFile::Section::Section()
     : keyIndexDirty(true)
 {
 }
 
-IniFile::Section::Section(const XString &sectionName)
+PlayerIniFile::Section::Section(const XString &sectionName)
     : name(sectionName), keyIndexDirty(true)
 {
     headerLine << "[" << sectionName << "]";
 }
 
-void IniFile::Section::MarkKeyIndexDirty() const
+void PlayerIniFile::Section::MarkKeyIndexDirty() const
 {
     keyIndexDirty = true;
 }
 
-void IniFile::Section::RebuildKeyIndex() const
+void PlayerIniFile::Section::RebuildKeyIndex() const
 {
     if (!keyIndexDirty)
         return;
@@ -56,21 +56,21 @@ void IniFile::Section::RebuildKeyIndex() const
     keyIndexDirty = false;
 }
 
-IniFile::Entry *IniFile::Section::FindKey(const XString &normalizedKey)
+PlayerIniFile::Entry *PlayerIniFile::Section::FindKey(const XString &normalizedKey)
 {
     RebuildKeyIndex();
     int index = -1;
     return keyIndex.LookUp(normalizedKey, index) && index >= 0 && index < entries.Size() ? &entries[index] : NULL;
 }
 
-const IniFile::Entry *IniFile::Section::FindKey(const XString &normalizedKey) const
+const PlayerIniFile::Entry *PlayerIniFile::Section::FindKey(const XString &normalizedKey) const
 {
     RebuildKeyIndex();
     int index = -1;
     return keyIndex.LookUp(normalizedKey, index) && index >= 0 && index < entries.Size() ? &entries[index] : NULL;
 }
 
-void IniFile::Clear()
+void PlayerIniFile::Clear()
 {
     m_LeadingLines.Clear();
     m_Sections.Clear();
@@ -78,7 +78,7 @@ void IniFile::Clear()
     m_SectionIndexDirty = true;
 }
 
-XString IniFile::TrimAscii(const XString &str)
+XString PlayerIniFile::TrimAscii(const XString &str)
 {
     int first = 0;
     while (first < (int)str.Length() && IsAsciiSpace(str[first]))
@@ -91,7 +91,7 @@ XString IniFile::TrimAscii(const XString &str)
     return SubstringLength(str, (XWORD)first, (XWORD)(last - first));
 }
 
-XString IniFile::NormalizeName(const XString &str)
+XString PlayerIniFile::NormalizeName(const XString &str)
 {
     XString result = TrimAscii(str);
     for (int i = 0; i < (int)result.Length(); ++i)
@@ -103,18 +103,18 @@ XString IniFile::NormalizeName(const XString &str)
     return result;
 }
 
-bool IniFile::IsCommentLine(const XString &line)
+bool PlayerIniFile::IsCommentLine(const XString &line)
 {
     XString trimmed = TrimAscii(line);
     return !trimmed.IsEmpty() && (trimmed[0] == ';' || trimmed[0] == '#');
 }
 
-bool IniFile::IsEmptyLine(const XString &line)
+bool PlayerIniFile::IsEmptyLine(const XString &line)
 {
     return TrimAscii(line).IsEmpty();
 }
 
-bool IniFile::IsSectionHeader(const XString &line, XString &sectionName)
+bool PlayerIniFile::IsSectionHeader(const XString &line, XString &sectionName)
 {
     XString trimmed = TrimAscii(line);
     if (trimmed.Length() < 2 || trimmed[0] != '[')
@@ -128,7 +128,7 @@ bool IniFile::IsSectionHeader(const XString &line, XString &sectionName)
     return true;
 }
 
-bool IniFile::ParseKeyValue(const XString &line, XString &key, XString &value, XString &comment)
+bool PlayerIniFile::ParseKeyValue(const XString &line, XString &key, XString &value, XString &comment)
 {
     XWORD eq = line.Find('=');
     if (eq == XString::NOTFOUND)
@@ -170,7 +170,7 @@ bool IniFile::ParseKeyValue(const XString &line, XString &key, XString &value, X
     return true;
 }
 
-XString IniFile::FormatKeyValue(const XString &key, const XString &value, const XString &comment)
+XString PlayerIniFile::FormatKeyValue(const XString &key, const XString &value, const XString &comment)
 {
     XString result;
     result << key << " = " << value;
@@ -179,7 +179,7 @@ XString IniFile::FormatKeyValue(const XString &key, const XString &value, const 
     return result;
 }
 
-bool IniFile::ParseFromString(const XString &content)
+bool PlayerIniFile::ParseFromString(const XString &content)
 {
     Clear();
 
@@ -254,7 +254,7 @@ bool IniFile::ParseFromString(const XString &content)
     return true;
 }
 
-bool IniFile::ParseFromFile(const char *filename)
+bool PlayerIniFile::ParseFromFile(const char *filename)
 {
     if (!filename || filename[0] == '\0')
         return false;
@@ -292,7 +292,7 @@ bool IniFile::ParseFromFile(const char *filename)
     return ParseFromString(content);
 }
 
-XString IniFile::WriteToString() const
+XString PlayerIniFile::WriteToString() const
 {
     XString result;
     for (int i = 0; i < m_LeadingLines.Size(); ++i)
@@ -324,7 +324,7 @@ XString IniFile::WriteToString() const
     return result;
 }
 
-bool IniFile::WriteToFile(const char *filename) const
+bool PlayerIniFile::WriteToFile(const char *filename) const
 {
     if (!filename || filename[0] == '\0')
         return false;
@@ -340,7 +340,7 @@ bool IniFile::WriteToFile(const char *filename) const
     return ok;
 }
 
-XString IniFile::GetValue(const XString &sectionName, const XString &key, const XString &defaultValue) const
+XString PlayerIniFile::GetValue(const XString &sectionName, const XString &key, const XString &defaultValue) const
 {
     const Section *section = FindSection(sectionName);
     if (!section)
@@ -350,7 +350,7 @@ XString IniFile::GetValue(const XString &sectionName, const XString &key, const 
     return entry ? entry->value : defaultValue;
 }
 
-bool IniFile::SetValue(const XString &sectionName, const XString &key, const XString &value)
+bool PlayerIniFile::SetValue(const XString &sectionName, const XString &key, const XString &value)
 {
     XString trimmedKey = TrimAscii(key);
     if (trimmedKey.IsEmpty())
@@ -381,7 +381,7 @@ bool IniFile::SetValue(const XString &sectionName, const XString &key, const XSt
     return true;
 }
 
-void IniFile::RebuildSectionIndex() const
+void PlayerIniFile::RebuildSectionIndex() const
 {
     if (!m_SectionIndexDirty)
         return;
@@ -398,21 +398,21 @@ void IniFile::RebuildSectionIndex() const
     m_SectionIndexDirty = false;
 }
 
-IniFile::Section *IniFile::FindSection(const XString &sectionName)
+PlayerIniFile::Section *PlayerIniFile::FindSection(const XString &sectionName)
 {
     RebuildSectionIndex();
     int index = -1;
     return m_SectionIndex.LookUp(NormalizeName(sectionName), index) && index >= 0 && index < m_Sections.Size() ? &m_Sections[index] : NULL;
 }
 
-const IniFile::Section *IniFile::FindSection(const XString &sectionName) const
+const PlayerIniFile::Section *PlayerIniFile::FindSection(const XString &sectionName) const
 {
     RebuildSectionIndex();
     int index = -1;
     return m_SectionIndex.LookUp(NormalizeName(sectionName), index) && index >= 0 && index < m_Sections.Size() ? &m_Sections[index] : NULL;
 }
 
-IniFile::Section *IniFile::AddSection(const XString &sectionName)
+PlayerIniFile::Section *PlayerIniFile::AddSection(const XString &sectionName)
 {
     XString trimmedName = TrimAscii(sectionName);
     m_Sections.Expand();

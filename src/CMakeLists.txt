@@ -77,6 +77,7 @@ if (BALLANCE_BUILD_STATIC)
         set(_player_static_name "${${_player_static_module_prefix}_DISPLAY_NAME}")
         set(_player_static_info_count "${${_player_static_module_prefix}_GET_INFO_COUNT}")
         set(_player_static_info "${${_player_static_module_prefix}_GET_INFO}")
+        set(_player_static_resolver "${${_player_static_module_prefix}_GET_FUNCTION}")
         set(_player_static_reader "${${_player_static_module_prefix}_GET_READER}")
         set(_player_static_register "${${_player_static_module_prefix}_REGISTER_DECLARATIONS}")
 
@@ -96,6 +97,10 @@ if (BALLANCE_BUILD_STATIC)
             string(APPEND PLAYER_STATIC_PLUGIN_DECLARATIONS
                     "extern CKDataReader *${_player_static_reader}(int);\n")
         endif ()
+        if (_player_static_resolver)
+            string(APPEND PLAYER_STATIC_PLUGIN_DECLARATIONS
+                    "extern void *${_player_static_resolver}(const char *);\n")
+        endif ()
         if (_player_static_register)
             string(APPEND PLAYER_STATIC_PLUGIN_DECLARATIONS
                     "extern void ${_player_static_register}(XObjectDeclarationArray *);\n")
@@ -106,7 +111,8 @@ if (BALLANCE_BUILD_STATIC)
                 _player_static_info_count
                 _player_static_info
                 _player_static_reader
-                _player_static_register)
+                _player_static_register
+                _player_static_resolver)
             if (NOT ${_callback})
                 set(${_callback}_value NULL)
             else ()
@@ -116,7 +122,7 @@ if (BALLANCE_BUILD_STATIC)
 
         string(APPEND PLAYER_STATIC_PLUGIN_ENTRIES
                 "#if defined(${_player_static_macro})\n"
-                "    {\"${_player_static_name}\", ${_player_static_info_count_value}, ${_player_static_info_value}, ${_player_static_reader_value}, ${_player_static_register_value}},\n"
+                "    {\"${_player_static_name}\", ${_player_static_info_count_value}, ${_player_static_info_value}, ${_player_static_reader_value}, ${_player_static_register_value}, ${_player_static_resolver_value}},\n"
                 "#endif\n")
     endforeach ()
 
@@ -186,6 +192,21 @@ if (BALLANCE_BUILD_STATIC)
     endif ()
 
     target_link_libraries(${PLAYER_NAME} PRIVATE ${_ballance_static_module_targets})
+endif ()
+
+if (TARGET BML AND BML_BUILD_STATIC)
+    target_link_libraries(${PLAYER_NAME} PRIVATE BML)
+    target_compile_definitions(${PLAYER_NAME} PRIVATE BALLANCE_STATIC_BML=1)
+    target_sources(${PLAYER_NAME} PRIVATE StaticBml.cpp)
+endif ()
+
+if (TARGET BallanceTAS AND TAS_BUILD_STATIC)
+    target_link_libraries(${PLAYER_NAME} PRIVATE BallanceTAS)
+    target_compile_definitions(${PLAYER_NAME} PRIVATE BALLANCE_STATIC_TAS=1)
+endif ()
+if (TARGET LegacyTASRuntime AND LEGACY_TAS_BUILD_STATIC)
+    target_link_libraries(${PLAYER_NAME} PRIVATE LegacyTASRuntime)
+    target_compile_definitions(${PLAYER_NAME} PRIVATE BALLANCE_STATIC_LEGACY_TAS=1)
 endif ()
 
 target_include_directories(${PLAYER_NAME} PRIVATE
