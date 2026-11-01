@@ -249,6 +249,9 @@ if (EMSCRIPTEN)
     target_link_options(PlayerBrowser PRIVATE "-sEXIT_RUNTIME=0" "-lidbfs.js"
         "-sEXPORTED_RUNTIME_METHODS=['FS','IDBFS','ENV','callMain','ccall','requestFullscreen']")
     set_target_properties(PlayerBrowser PROPERTIES SUFFIX ".mjs")
+    if(TARGET BallanceTAS AND TARGET PracticeTools AND TARGET LegacyTASRuntime)
+        include("${CMAKE_SOURCE_DIR}/packaging/web/mods/WebMods.cmake")
+    endif()
 endif ()
 
 set(_player_sdl_runtime_target "")
