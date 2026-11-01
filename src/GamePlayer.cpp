@@ -4,6 +4,7 @@ extern "C" void SdlInputManagerSetWebDeadline(unsigned long long);
 #include "GamePlayer.h"
 #ifdef PLAYER_WEB_INTERACTIVE
 #include "CKResponsiveViewport.h"
+#include <emscripten.h>
 #endif
 #include "PlayerOptions.h"
 #if __has_include("CKSortPolicy.h")
@@ -1333,6 +1334,20 @@ bool CGamePlayer::InitDriver()
         }
     }
 
+#ifdef PLAYER_WEB_INTERACTIVE
+    // Browser preference is separate from the last automatically resized window.
+    const int preferredWidth = EM_ASM_INT({ return Module.browserResolution?.[0] || 0; });
+    const int preferredHeight = EM_ASM_INT({ return Module.browserResolution?.[1] || 0; });
+    m_Config.screenMode = 0;
+    for (int i = 1;; ++i) {
+        int modeWidth, modeHeight, modeBpp;
+        if (!GetDisplayMode(modeWidth, modeHeight, modeBpp, m_Config.driver, i)) break;
+        if (modeWidth == preferredWidth && modeHeight == preferredHeight) {
+            m_Config.screenMode = i;
+            break;
+        }
+    }
+#endif
     CLogger::Get().Debug("Screen Mode: %d x %d x %d", m_Config.width, m_Config.height, m_Config.bpp);
 
     return true;
@@ -2278,6 +2293,12 @@ int CGamePlayer::OnChangeScreenMode(int driver, int screenMode)
         im->SetScreenMode(m_Config.screenMode);
     }
 
+#ifdef PLAYER_WEB_INTERACTIVE
+    // Explicit menu choices change host policy. Ordinary render-context resizes
+    // (level scripts, DPR changes) must never become user preferences.
+    EM_ASM({ Module.onResolutionChange?.($0, $1); }, screenMode == 0 ? 0 : width, screenMode == 0 ? 0 : height);
+    return 1;
+#endif
     ResizeWindow();
     OnSize();
 

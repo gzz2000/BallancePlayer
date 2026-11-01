@@ -222,8 +222,13 @@ static int ListScreenModes(const CKBehaviorContext &behcontext)
             {
                 screenModes->InsertRow();
                 screenModes->SetElementValue(row, 0, &i, sizeof(int));
-                screenModes->SetElementValue(row, 1, &dm[i].Width, sizeof(int));
-                screenModes->SetElementValue(row, 2, &dm[i].Height, sizeof(int));
+                // Driver slot zero is Auto; real modes start at slot one.
+                int listedWidth = dm[i].Width, listedHeight = dm[i].Height;
+#ifdef PLAYER_WEB_INTERACTIVE
+                if (i == 0) listedWidth = listedHeight = 0;
+#endif
+                screenModes->SetElementValue(row, 1, &listedWidth, sizeof(int));
+                screenModes->SetElementValue(row, 2, &listedHeight, sizeof(int));
                 screenModes->SetElementValue(row, 3, &dm[i].Bpp, sizeof(int));
                 ++row;
             }
@@ -460,17 +465,24 @@ bool EditScript(CKLevel *level, const CGameConfig &config, const char *resolvedF
         scriptutils::SetInputParameterValue(bbpFilter, 2, config.bpp);
     }
 
+#ifdef PLAYER_WEB_INTERACTIVE
+    // The browser owns its viewport; desktop mode filters would discard Auto
+    // (0x0) and larger virtual window sizes before the menu sees them.
+    const bool unlockWide = true, unlockHigh = true;
+#else
+    const bool unlockWide = config.unlockWidescreen, unlockHigh = config.unlockHighResolution;
+#endif
     // Unlock widescreen (Not 4:3)
-    if (config.unlockWidescreen)
+    if (unlockWide)
     {
         if (!UnlockWidescreen(sm, minWidth))
             CLogger::Get().Warn("Failed to unlock widescreen");
     }
 
     // Unlock high resolution
-    if (config.unlockHighResolution)
+    if (unlockHigh)
     {
-        if (!UnlockHighResolution(sm, bbpFilter, minWidth, maxWidth, config.unlockWidescreen))
+        if (!UnlockHighResolution(sm, bbpFilter, minWidth, maxWidth, unlockWide))
             CLogger::Get().Warn("Failed to unlock high resolution");
     }
 
